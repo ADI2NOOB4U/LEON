@@ -1,7 +1,9 @@
 ﻿import threading
 import time
 from datetime import datetime, timezone
+from typing import Protocol
 
+from backend.app.core.planner import planner_service
 from backend.app.jobs.task_manager import (
     get_next_queued_task,
     get_task,
@@ -11,11 +13,22 @@ from backend.app.jobs.task_manager import (
 )
 
 
+class StepExecutor(Protocol):
+    def execute(self, step: dict) -> str:
+        """Execute one planned step and return its result."""
+
+
+class TemporaryStepExecutor:
+    def execute(self, step: dict) -> str:
+        return f"Temporary execution completed: {step['title']}"
+
+
 class LeonWorker:
 
-    def __init__(self):
+    def __init__(self, executor: StepExecutor | None = None):
         self._running = False
         self._thread = None
+        self._executor = executor or TemporaryStepExecutor()
 
     def start(self):
         if self._running:
@@ -48,6 +61,7 @@ class LeonWorker:
 
     def _execute(self, task: dict):
         task_id = task["id"]
+        current_step = None
 
         update_task(
             task_id,
@@ -61,30 +75,68 @@ class LeonWorker:
                 10,
                 "Task plan initialized.",
             )
-            time.sleep(2)
+            plan = planner_service.get_plan(task_id)
 
-            if self._cancelled(task_id):
-                return self._cancel(task_id)
-
-            set_stage(
-                task_id,
-                "executing",
-                30,
-                "Execution started.",
-            )
-
-            for progress in (40, 55, 70, 80):
-                time.sleep(1)
-
+            if plan:
                 if self._cancelled(task_id):
                     return self._cancel(task_id)
 
-                update_task(
-                    task_id,
-                    status="executing",
-                    current_stage="executing",
-                    progress=progress,
+                set_stage(task_id, "executing", 10, "Execution started.")
+                total_steps = len(plan["steps"])
+                completed_steps = sum(
+                    step["status"] == "completed" for step in plan["steps"]
                 )
+                if total_steps:
+                    update_task(
+                        task_id,
+                        progress=min(90, int(90 * completed_steps / total_steps)),
+                    )
+
+                for step in planner_service.get_pending_steps(task_id):
+                    if self._cancelled(task_id):
+                        return self._cancel(task_id)
+
+                    current_step = step
+                    self._transition_step(step, "running")
+                    try:
+                        result = self._executor.execute(step)
+                    except Exception as exc:
+                        self._transition_step(step, "failed", str(exc))
+                        raise
+
+                    self._transition_step(step, "completed", result)
+                    current_step = None
+                    completed_steps += 1
+                    update_task(
+                        task_id,
+                        status="executing",
+                        current_stage="executing",
+                        progress=min(90, int(90 * completed_steps / total_steps)),
+                    )
+            else:
+                time.sleep(2)
+                if self._cancelled(task_id):
+                    return self._cancel(task_id)
+
+                set_stage(
+                    task_id,
+                    "executing",
+                    30,
+                    "Execution started.",
+                )
+
+                for progress in (40, 55, 70, 80):
+                    time.sleep(1)
+
+                    if self._cancelled(task_id):
+                        return self._cancel(task_id)
+
+                    update_task(
+                        task_id,
+                        status="executing",
+                        current_stage="executing",
+                        progress=progress,
+                    )
 
             set_stage(
                 task_id,
@@ -127,6 +179,9 @@ class LeonWorker:
                     error=str(exc),
                 )
 
+                if current_step is not None:
+                    self._transition_step(current_step, "pending")
+
                 log_event(
                     task_id,
                     "retry",
@@ -146,6 +201,19 @@ class LeonWorker:
                     "failed",
                     str(exc),
                 )
+
+    @staticmethod
+    def _transition_step(
+        step: dict, status: str, result: str | None = None
+    ) -> None:
+        updated = planner_service.update_step(step["id"], status, result)
+        if updated is None:
+            raise ValueError(f"Plan step {step['id']} no longer exists")
+        log_event(
+            step["task_id"],
+            f"step_{status}",
+            f"Step {step['step_number']} '{step['title']}' transitioned to {status}.",
+        )
 
     def _cancel(self, task_id: int):
         update_task(

@@ -151,6 +151,15 @@ class PlannerService:
         result["steps"] = [dict(step) for step in steps]
         return result
 
+    def get_pending_steps(self, task_id: int) -> list[dict]:
+        conn = get_connection()
+        steps = conn.execute(
+            "SELECT id, task_id, step_number, title, description, status, result FROM plan_steps WHERE task_id = ? AND status = 'pending' ORDER BY step_number ASC",
+            (task_id,),
+        ).fetchall()
+        conn.close()
+        return [dict(step) for step in steps]
+
     def update_step(
         self, step_id: int, status: PlanStepStatus | str, result: str | None = None
     ) -> dict | None:
