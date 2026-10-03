@@ -1,4 +1,7 @@
-﻿import httpx
+﻿from typing import Any
+from typing import Any
+
+import httpx
 
 from backend.app.config.settings import settings
 from backend.app.core.providers.base import ModelProvider

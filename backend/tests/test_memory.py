@@ -44,6 +44,11 @@ def test_delete_missing_memory_returns_not_found():
     assert client.delete("/api/memory/999999").status_code == 404
 
 
+def test_empty_memory_returns_no_context():
+    assert memory_service.retrieve_relevant("Anything about my preferences") == []
+    assert memory_service.context_for("Anything about my preferences") == ""
+
+
 def test_retrieve_relevant_memories_is_bounded_and_contains_type_and_content():
     memory_service.add("preference", "Favorite color is blue", importance=0.9)
     memory_service.add("project", "Unrelated migration details " + "x" * 200)
