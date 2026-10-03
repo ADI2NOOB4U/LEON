@@ -11,6 +11,7 @@ from backend.app.memory.memory import memory_service
 from backend.app.models.schemas import GeneratedPlan, PlannedStep, PlanStepStatus
 from backend.app.tools.registry import ToolRegistry
 from backend.app.tools.system_tools import system_registry
+from backend.app.core.capabilities import Capability, classify_command
 
 
 class PlanGenerationError(ValueError):
@@ -90,6 +91,7 @@ class PlannerService:
             raise ValueError("Task not found")
 
         request = task["title"]
+        proposal = classify_command(request)
         if self._is_datetime_request(request):
             return self.create_plan(
                 task_id,
@@ -102,6 +104,17 @@ class PlannerService:
                     )
                 ],
             )
+        if proposal.capability == Capability.MEDIA:
+            # The provider is intentionally resolved at execution time. A
+            # missing provider produces a truthful structured failure.
+            return self.create_plan(task_id, [PlannedStep(
+                title=f"Media: {proposal.action}",
+                description="Use the available media provider and report its verified state.",
+                tool_name="media_control",
+                arguments={"action": proposal.action, "query": request},
+            )]) if self.registry.get("media_control") else self.create_plan(task_id, [
+                PlannedStep(title="Resolve media request", description="Determine whether a supported media provider is available.")
+            ])
         if self.router.provider_name == "mock":
             plan = GeneratedPlan(
                 steps=[

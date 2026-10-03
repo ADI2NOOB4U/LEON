@@ -10,6 +10,9 @@ from backend.app.api.tasks import router as tasks_router
 from backend.app.api.tools import router as tools_router
 from backend.app.api.news import router as news_router
 from backend.app.api.voice import router as voice_router
+from backend.app.api.vision import router as vision_router
+from backend.app.api.media import router as media_router
+from backend.app.tools.browser_tools import browser_session
 from backend.app.config.settings import settings
 from backend.app.db.database import init_db
 from backend.app.jobs.worker import worker
@@ -28,6 +31,7 @@ async def lifespan(app: FastAPI):
 
     worker.stop()
     scheduler.stop()
+    await browser_session.close()
 
 
 app = FastAPI(
@@ -39,13 +43,17 @@ app = FastAPI(
 app.include_router(command_router, prefix="/api")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Accept",
+        "Accept-Language",
+        "Authorization",
+        "Content-Type",
+        "Origin",
+        "X-Requested-With",
     ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 app.include_router(health_router, prefix="/api")
@@ -55,6 +63,8 @@ app.include_router(tools_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
 app.include_router(news_router, prefix="/api")
 app.include_router(voice_router, prefix="/api")
+app.include_router(vision_router, prefix="/api")
+app.include_router(media_router, prefix="/api")
 
 
 @app.get("/")

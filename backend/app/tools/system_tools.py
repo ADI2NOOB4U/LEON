@@ -2,7 +2,8 @@ import os
 import re
 import sys
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -15,22 +16,43 @@ from backend.app.tools.email_tools import register_email_tools
 from backend.app.tools.filesystem_tools import register_filesystem_tools
 from backend.app.tools.git_tools import register_git_tools
 from backend.app.tools.registry import ToolRegistry
+from backend.app.tools.applications import resolve_application, installed_executable
+from backend.app.security.web_security import WebSecurityError, validate_public_url
 
 
 class GetDatetimeTool(BaseTool):
     name = "get_datetime"
-    description = "Return the current local date, time, and timezone."
+    description = "Return the actual current date and time for the local system or a named IANA timezone."
     permission = "SAFE"
 
-    async def execute(self, **kwargs: Any) -> dict[str, Any]:
+    async def execute(self, timezone_name: str = "", include_utc: bool = False, **kwargs: Any) -> dict[str, Any]:
         if kwargs:
-            raise ValueError("get_datetime does not accept arguments")
-
-        current_time = datetime.now().astimezone()
+            raise ValueError("get_datetime received unexpected arguments")
+        try:
+            zone = ZoneInfo(timezone_name.strip()) if timezone_name.strip() else datetime.now().astimezone().tzinfo
+        except ZoneInfoNotFoundError as exc:
+            # Windows installations without the optional tzdata wheel still get
+            # deterministic support for common fixed-offset requests.
+            fixed_zones = {
+                "UTC": timezone.utc,
+                "Etc/UTC": timezone.utc,
+                "Asia/Kolkata": timezone(timedelta(hours=5, minutes=30), "IST"),
+                "Asia/Tokyo": timezone(timedelta(hours=9), "JST"),
+            }
+            try:
+                zone = fixed_zones[timezone_name.strip()]
+            except KeyError:
+                raise ValueError("timezone_name must be a valid IANA timezone") from exc
+        current_time = datetime.now(zone)
+        utc_time = datetime.now(timezone.utc)
         return {
             "tool": self.name,
             "datetime": current_time.isoformat(),
-            "timezone": current_time.tzname(),
+            "date": current_time.date().isoformat(),
+            "time": current_time.strftime("%H:%M:%S"),
+            "day_of_week": current_time.strftime("%A"),
+            "timezone": timezone_name.strip() or getattr(current_time.tzinfo, "key", None) or current_time.tzname(),
+            "utc": utc_time.isoformat() if include_utc else None,
         }
 
 
@@ -77,15 +99,22 @@ class OpenAppTool(BaseTool):
             raise ValueError("app_name must be a non-empty string")
 
         app_name = app_name.strip()
-        if (
-            not self._APP_NAME_PATTERN.fullmatch(app_name)
-            or any(separator in app_name for separator in ("/", "\\", ":"))
-        ):
-            raise ValueError("app_name must be a simple Windows application name")
         if sys.platform != "win32":
             raise OSError("open_app is only supported on Windows")
 
-        os.startfile(app_name)
+        application = resolve_application(app_name)
+        if application:
+            launch_target = installed_executable(application)
+        else:
+            if (
+                not self._APP_NAME_PATTERN.fullmatch(app_name)
+                or any(separator in app_name for separator in ("/", "\\", ":"))
+            ):
+                raise ValueError("app_name must be a simple Windows application name")
+            launch_target = app_name
+        if not launch_target:
+            raise FileNotFoundError(f"Application not found: {app_name}")
+        os.startfile(launch_target)
         return {
             "tool": self.name,
             "app_name": app_name,
@@ -134,23 +163,10 @@ class OpenUrlTool(BaseTool):
         if not isinstance(url, str) or not url.strip():
             raise ValueError("url must be a non-empty string")
 
-        url = url.strip()
-        parsed = urlsplit(url)
         try:
-            port = parsed.port
-        except ValueError:
-            port = None
-            valid_port = False
-        else:
-            valid_port = port is None or 0 < port < 65536
-        if (
-            not self._URL_PATTERN.fullmatch(url)
-            or "\\" in url
-            or parsed.scheme.lower() not in {"http", "https"}
-            or not parsed.hostname
-            or not valid_port
-        ):
-            raise ValueError("url must be a valid HTTP or HTTPS URL")
+            url = validate_public_url(url.strip())
+        except WebSecurityError as exc:
+            raise ValueError(str(exc)) from exc
 
         opened = webbrowser.open(url, new=2)
         return {"tool": self.name, "url": url, "opened": opened}

@@ -317,7 +317,7 @@ export function SystemsView() {
                 color: COLORS.text.muted,
               }}
             >
-              localhost:1337
+              127.0.0.1:8000
             </div>
           </div>
           <div

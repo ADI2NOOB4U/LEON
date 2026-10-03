@@ -61,3 +61,22 @@ async def get_briefing(briefing_id: int):
     briefing = news_service.get_briefing(briefing_id)
     if not briefing: raise HTTPException(status_code=404, detail="Briefing not found")
     return briefing
+
+
+@router.get("/events")
+async def list_events():
+    return news_service.events()
+
+
+@router.get("/events/{event_id}")
+async def get_event(event_id: int):
+    event = news_service.get_event(event_id)
+    if not event: raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+
+@router.post("/events/{event_id}/dismiss")
+async def dismiss_event(event_id: int):
+    event = news_service.dismiss_event(event_id)
+    if not event: raise HTTPException(status_code=404, detail="Event not found")
+    return event

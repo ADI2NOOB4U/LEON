@@ -65,7 +65,8 @@ def test_plan_validates_task_and_steps():
     assert client.post(f"/api/tasks/{task_id}/plan", json={"steps": ["   "]}).status_code == 422
 
 
-def test_mock_plan_is_generated_and_persisted_without_execution():
+def test_mock_plan_is_generated_and_persisted_without_execution(monkeypatch):
+    monkeypatch.setattr(planner_service.router, "provider_name", "mock")
     task_id = create_task("Organize project notes")
 
     response = client.post(f"/api/tasks/{task_id}/plan")

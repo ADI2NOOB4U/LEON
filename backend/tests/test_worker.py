@@ -70,6 +70,21 @@ def test_worker_executes_plan_in_order_and_tracks_progress(monkeypatch):
     assert [step["step_number"] for step in plan["steps"]] == [1, 2, 3]
 
 
+def test_worker_fails_non_tool_steps_without_an_executor():
+    task_id = create_task("Unsupported action", max_retries=0)
+    plan = make_plan(task_id)
+
+    LeonWorker()._execute(get_task(task_id))
+
+    task = get_task(task_id)
+    updated_plan = planner_service.get_plan(task_id)
+    assert task["status"] == "failed"
+    assert "No executor is configured" in task["error"]
+    assert updated_plan["steps"][0]["status"] == "failed"
+    assert "Temporary execution completed" not in (task["result"] or "")
+    assert plan["steps"][0]["status"] == "pending"
+
+
 def test_worker_stops_on_failure_and_retries_only_failed_step(monkeypatch):
     disable_worker_delays(monkeypatch)
     task_id = create_task("Prepare a report", max_retries=1)

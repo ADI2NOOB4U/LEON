@@ -48,7 +48,7 @@ def test_command_task_runs_plan_steps_verifies_and_notifies(monkeypatch):
     LeonWorker(registry=registry, notifications=NotificationService(notifications))._execute(get_task(task_id))
 
     task = get_task(task_id)
-    assert task["status"] == "completed"
+    assert task["status"] == "completed", (task, get_task_logs(task_id))
     assert task["progress"] == 100
     assert "1 step" in task["result"]
     assert json.loads(planner_service.get_plan(task_id)["steps"][0]["result"]) == {"text": "ok"}

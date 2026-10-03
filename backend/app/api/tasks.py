@@ -24,6 +24,7 @@ async def create_new_task(request: TaskCreate):
         request.task_type,
         request.research_source_count,
         request.notify_on_completion,
+        request.priority,
     )
     return get_task(task_id)
 

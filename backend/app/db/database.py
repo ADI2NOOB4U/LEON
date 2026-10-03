@@ -2,6 +2,8 @@
 from pathlib import Path
 from datetime import datetime, timezone
 
+from backend.app.security.web_security import redact_task_text
+
 BASE_DIR = Path(__file__).resolve().parents[3]
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "leon.db"
@@ -63,6 +65,8 @@ def init_db() -> None:
         "cancel_requested": "ALTER TABLE tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0",
         "last_activity": "ALTER TABLE tasks ADD COLUMN last_activity TEXT",
         "summary": "ALTER TABLE tasks ADD COLUMN summary TEXT",
+        "priority": "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'",
+        "wait_for_user_reason": "ALTER TABLE tasks ADD COLUMN wait_for_user_reason TEXT",
     }
 
     for name, sql in migrations.items():
@@ -221,6 +225,39 @@ def init_db() -> None:
             FOREIGN KEY(briefing_id) REFERENCES briefings(id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS news_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            title TEXT NOT NULL,
+            normalized_title TEXT NOT NULL,
+            importance TEXT NOT NULL DEFAULT 'interesting',
+            status TEXT NOT NULL DEFAULT 'reported',
+            summary TEXT,
+            location TEXT,
+            source_url TEXT,
+            source TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            last_alerted_at TEXT,
+            alerted INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(normalized_title)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            url TEXT NOT NULL,
+            title TEXT,
+            publisher TEXT,
+            published_at TEXT,
+            retrieved_at TEXT NOT NULL,
+            source_type TEXT NOT NULL DEFAULT 'report',
+            verification_status TEXT NOT NULL DEFAULT 'reported',
+            FOREIGN KEY(event_id) REFERENCES news_events(id)
+        )
+    """)
 
     conn.commit()
     conn.close()
@@ -228,12 +265,13 @@ def init_db() -> None:
 
 def log_event(task_id: int, stage: str, message: str) -> None:
     conn = get_connection()
+    safe_message = redact_task_text(message)
     conn.execute(
         """
         INSERT INTO task_logs(task_id, timestamp, stage, message)
         VALUES (?, ?, ?, ?)
         """,
-        (task_id, now(), stage, message),
+        (task_id, now(), stage, safe_message),
     )
     conn.commit()
     conn.close()

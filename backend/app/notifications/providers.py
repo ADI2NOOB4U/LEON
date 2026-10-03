@@ -32,7 +32,17 @@ class DesktopNotificationProvider:
             from plyer import notification
         except ImportError as exc:
             raise RuntimeError("Desktop notifications are unavailable") from exc
-        notification.notify(title=title, message=body, app_name="LEON")
+        notification.notify(
+            title=_truncate_notification_text(title, 63),
+            message=_truncate_notification_text(body, 255),
+            app_name="LEON",
+        )
+
+
+def _truncate_notification_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 class UnavailableNotificationProvider:

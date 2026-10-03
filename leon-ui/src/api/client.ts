@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { SystemStatus, Task } from '../types';
 
-const API_BASE = 'http://localhost:1337';
+const API_BASE = 'http://127.0.0.1:8000';
 
 const api = axios.create({
   baseURL: API_BASE,

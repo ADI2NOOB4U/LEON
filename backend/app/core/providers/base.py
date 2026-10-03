@@ -5,7 +5,7 @@ from typing import Any
 class ModelProvider(ABC):
 
     @abstractmethod
-    async def chat(self, messages: list[dict[str, str]]) -> str:
+    async def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         raise NotImplementedError
 
     @abstractmethod

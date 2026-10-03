@@ -1,22 +1,29 @@
 from pathlib import Path
 
 from backend.app.db.database import get_connection, log_event, now
+from backend.app.security.web_security import redact_task_text
 
 
 def create_task(title: str, max_retries: int = 2, task_type: str = "standard",
-                research_source_count: int = 5, notify_on_completion: bool = True) -> int:
+                research_source_count: int = 5, notify_on_completion: bool = True,
+                priority: str = "normal") -> int:
     if task_type not in {"standard", "research"}:
         raise ValueError("task_type must be 'standard' or 'research'")
     if not isinstance(research_source_count, int) or not 1 <= research_source_count <= 20:
         raise ValueError("research_source_count must be between 1 and 20")
+    if priority not in {"high", "normal", "low"}:
+        raise ValueError("priority must be 'high', 'normal', or 'low'")
     timestamp = now()
     conn = get_connection()
+    columns = ["title", "task_type", "research_source_count", "notify_on_completion", "status",
+               "created_at", "updated_at", "last_activity", "progress", "current_stage", "max_retries", "priority"]
+    values = [title, task_type, research_source_count, int(notify_on_completion), 'queued',
+              timestamp, timestamp, timestamp, 0, 'queued', max_retries, priority]
     cursor = conn.execute(
-        """INSERT INTO tasks
-        (title, task_type, research_source_count, notify_on_completion, status,
-         created_at, updated_at, last_activity, progress, current_stage, max_retries)
-        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, 0, 'queued', ?)""",
-        (title, task_type, research_source_count, int(notify_on_completion), timestamp, timestamp, timestamp, max_retries),
+        f"""INSERT INTO tasks
+        ({', '.join(columns)})
+        VALUES ({', '.join(['?'] * len(columns))})""",
+        values,
     )
     task_id = int(cursor.lastrowid)
     conn.commit(); conn.close()
@@ -34,7 +41,11 @@ def get_task_artifacts(task_id: int) -> list[dict]:
 def get_task(task_id: int):
     conn = get_connection(); row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone(); conn.close()
     if not row: return None
-    task = dict(row); task["artifacts"] = get_task_artifacts(task_id); return task
+    task = dict(row)
+    task.setdefault("priority", "normal")
+    task.setdefault("wait_for_user_reason", None)
+    task["artifacts"] = get_task_artifacts(task_id)
+    return task
 
 
 def get_tasks():
@@ -58,7 +69,9 @@ def get_task_logs(task_id: int):
 
 
 def get_next_queued_task():
-    conn = get_connection(); row = conn.execute("SELECT * FROM tasks WHERE status = 'queued' ORDER BY id LIMIT 1").fetchone(); conn.close()
+    conn = get_connection(); row = conn.execute(
+        "SELECT * FROM tasks WHERE status = 'queued' ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, id LIMIT 1"
+    ).fetchone(); conn.close()
     return dict(row) if row else None
 
 
@@ -79,12 +92,18 @@ def recover_interrupted_tasks() -> int:
 
 
 def update_task(task_id: int, **fields) -> None:
-    allowed = {"status", "started_at", "completed_at", "updated_at", "result", "summary", "error", "progress", "current_stage", "retry_count", "cancel_requested", "last_activity"}
+    allowed = {"status", "started_at", "completed_at", "updated_at", "result", "summary", "error", "progress", "current_stage", "retry_count", "cancel_requested", "last_activity", "priority", "wait_for_user_reason"}
     fields = {key: value for key, value in fields.items() if key in allowed}
     if not fields: return
     timestamp = now(); fields["updated_at"] = timestamp; fields.setdefault("last_activity", timestamp)
-    assignments = ", ".join(f"{key} = ?" for key in fields)
-    conn = get_connection(); conn.execute(f"UPDATE tasks SET {assignments} WHERE id = ?", [*fields.values(), task_id]); conn.commit(); conn.close()
+    sanitized = {}
+    for key, value in fields.items():
+        if isinstance(value, str):
+            sanitized[key] = redact_task_text(value)
+        else:
+            sanitized[key] = value
+    assignments = ", ".join(f"{key} = ?" for key in sanitized)
+    conn = get_connection(); conn.execute(f"UPDATE tasks SET {assignments} WHERE id = ?", [*sanitized.values(), task_id]); conn.commit(); conn.close()
 
 
 def set_stage(task_id: int, stage: str, progress: int, message: str):
@@ -96,3 +115,30 @@ def request_cancel(task_id: int) -> bool:
     task = get_task(task_id)
     if not task or task["status"] in {"completed", "failed", "cancelled"}: return False
     update_task(task_id, cancel_requested=1); log_event(task_id, "cancellation", "Cancellation requested."); return True
+
+
+def pause_task(task_id: int, reason: str | None = None) -> bool:
+    task = get_task(task_id)
+    if not task or task["status"] in {"completed", "failed", "cancelled", "paused"}:
+        return False
+    update_task(task_id, status="paused", current_stage="paused", wait_for_user_reason=reason)
+    log_event(task_id, "paused", reason or "Task paused.")
+    return True
+
+
+def resume_task(task_id: int) -> bool:
+    task = get_task(task_id)
+    if not task or task["status"] not in {"paused", "waiting_for_user"}:
+        return False
+    update_task(task_id, status="queued", current_stage="queued", wait_for_user_reason=None)
+    log_event(task_id, "resumed", "Task resumed from a paused checkpoint.")
+    return True
+
+
+def wait_for_user(task_id: int, reason: str) -> bool:
+    task = get_task(task_id)
+    if not task or task["status"] in {"completed", "failed", "cancelled"}:
+        return False
+    update_task(task_id, status="waiting_for_user", current_stage="waiting_for_user", wait_for_user_reason=reason)
+    log_event(task_id, "waiting_for_user", reason)
+    return True

@@ -32,9 +32,15 @@ class StepExecutor(Protocol):
         """Execute one planned step and return its result."""
 
 
-class TemporaryStepExecutor:
+class UnconfiguredStepExecutor:
     def execute(self, step: dict) -> str:
-        return f"Temporary execution completed: {step['title']}"
+        raise StepExecutorUnavailableError(
+            f"No executor is configured for plan step '{step['title']}'."
+        )
+
+
+class StepExecutorUnavailableError(RuntimeError):
+    """A planned step has no implementation and must not be reported as done."""
 
 
 class LeonWorker:
@@ -49,7 +55,7 @@ class LeonWorker:
     ):
         self._running = False
         self._thread = None
-        self._executor = executor or TemporaryStepExecutor()
+        self._executor = executor or UnconfiguredStepExecutor()
         self._registry = registry or system_registry
         self._permission_manager = permission_manager or PermissionManager()
         self._notifications = notifications or notification_service
@@ -207,7 +213,12 @@ class LeonWorker:
             coding_limit_reached = bool(
                 current_step and current_step.get("tool_name") == "coding_execute"
             )
-            if current and current["retry_count"] < current["max_retries"] and not coding_limit_reached:
+            if (
+                current
+                and current["retry_count"] < current["max_retries"]
+                and not coding_limit_reached
+                and not isinstance(exc, StepExecutorUnavailableError)
+            ):
                 retry_count = current["retry_count"] + 1
 
                 update_task(

@@ -7,12 +7,13 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from backend.app.config.settings import settings
 from backend.app.jobs.task_manager import register_artifact
 from backend.app.security.permissions import PermissionManager
 from backend.app.tools.registry import ToolRegistry
+from backend.app.security.web_security import inspect_untrusted_content
 
 
 class ResearchAgent:
@@ -27,12 +28,26 @@ class ResearchAgent:
         if not 1 <= source_count <= 20:
             raise ValueError("source_count must be between 1 and 20")
         search = self._tool("search_web")
-        search_result = await self._call(search, query=query)
-        candidates = self._candidates(search_result)
-        sources: list[dict[str, str]] = []
+        candidates: list[dict[str, str]] = []
         failures: list[str] = []
+        seen_candidates: set[str] = set()
+        queries = [query, f"{query} latest", f"{query} official source"]
+        for iteration, search_query in enumerate(queries[:settings.research_max_search_iterations]):
+            try:
+                search_result = await self._call(search, query=search_query)
+            except Exception as exc:
+                failures.append(f"search iteration {iteration + 1}: {type(exc).__name__}")
+                continue
+            for candidate in self._candidates(search_result):
+                key = self._canonical(candidate["url"])
+                if key not in seen_candidates:
+                    seen_candidates.add(key)
+                    candidates.append(candidate)
+            if len(candidates) >= source_count:
+                break
+        sources: list[dict[str, str]] = []
         for candidate in candidates:
-            if len(sources) >= source_count:
+            if len(sources) >= min(source_count, settings.research_max_pages):
                 break
             if cancelled and cancelled():
                 raise asyncio.CancelledError()
@@ -41,11 +56,13 @@ class ResearchAgent:
                 text = str(page.get("text", "")).strip()
                 if not text:
                     raise ValueError("page returned no text")
+                trust = inspect_untrusted_content(text)
                 sources.append({
                     "title": candidate.get("title") or self._title(text, candidate["url"]),
                     "url": candidate["url"],
                     "retrieved_at": datetime.now(timezone.utc).isoformat(),
                     "summary": self._summary(text),
+                    "prompt_injection_detected": str(bool(trust["prompt_injection_detected"])),
                 })
             except Exception as exc:
                 failures.append(f"{candidate['url']}: {exc}")
@@ -76,7 +93,9 @@ class ResearchAgent:
     @staticmethod
     def _canonical(url: str) -> str:
         parsed = urlsplit(url.strip())
-        return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path or "/", parsed.query, ""))
+        ignored = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"}
+        query = urlencode([(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key.lower() not in ignored])
+        return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path or "/", query, ""))
 
     @classmethod
     def _candidates(cls, result: Any) -> list[dict[str, str]]:

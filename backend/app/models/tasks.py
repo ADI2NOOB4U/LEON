@@ -7,6 +7,7 @@ class TaskCreate(BaseModel):
     task_type: str = Field(default="standard", pattern="^(standard|research)$")
     research_source_count: int = Field(default=5, ge=1, le=20)
     notify_on_completion: bool = True
+    priority: str = Field(default="normal", pattern="^(high|normal|low)$")
 
 
 class TaskArtifact(BaseModel):
@@ -38,6 +39,8 @@ class TaskResponse(BaseModel):
     task_type: str = "standard"
     research_source_count: int = 5
     notify_on_completion: int = 1
+    priority: str = "normal"
+    wait_for_user_reason: str | None = None
     artifacts: list[TaskArtifact] = []
 
 

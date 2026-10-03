@@ -20,8 +20,10 @@ SOURCES = {
     "india": ("thehindu.com", "indianexpress.com", "pib.gov.in"),
 }
 PREFERENCE_RANK = {"critical": 4, "important": 3, "interesting": 2, "ignore": 1}
+EVENT_IMPORTANCE_RANK = {"critical": 4, "important": 3, "interesting": 2, "ignore": 1}
 ALLOWED_PREFERENCES = {"critical", "important", "all"}
 URL_RE = re.compile(r"https?://[^\s<>\"')]+", re.I)
+NEWS_EVENT_RE = re.compile(r"\b(?:war|conflict|ceasefire|attack|strike|sanctions|election|cyber|breach|security|diplomatic|meeting|escalation|military|ai|launch|deal|policy|incident|dispute)\b", re.I)
 
 
 def validate_topic(topic: str) -> str:
@@ -44,6 +46,27 @@ def classify_story(title: str, topic: str, body: str = "") -> tuple[str, float, 
     if topic in text or any(term in text for term in topic.split()):
         return "interesting", 0.5, "Relevant to the subscribed topic but no high-impact signal was found."
     return "ignore", 0.1, "No strong importance or topic signal was found."
+
+
+def classify_event(title: str, topic: str, body: str = "") -> tuple[str, float, str]:
+    text = f"{title} {body}".lower()
+    critical = (
+        "attack", "airstrike", "ceasefire", "casualties", "kill", "explosion", "sanctions",
+        "election result", "armed conflict", "invasion", "mobilization", "major cyberattack",
+        "breach", "missile", "hostage", "evacuation", "state of emergency"
+    )
+    important = (
+        "meeting", "summit", "diplomatic", "policy shift", "escalation", "trade restriction",
+        "security incident", "military drill", "official statement", "deployment", "travel warning",
+        "joint statement", "alliance", "aid package", "tension"
+    )
+    if any(term in text for term in critical):
+        return "critical", 0.95, "The title matches a broader, high-impact public-safety or geopolitical development."
+    if any(term in text for term in important):
+        return "important", 0.75, "The report includes a material and consequential development with public significance."
+    if topic in text or any(term in text for term in topic.split()) or NEWS_EVENT_RE.search(title):
+        return "interesting", 0.5, "The item is relevant to a tracked public-affairs topic but not yet confirmed as major."
+    return "ignore", 0.08, "The item is too routine, weakly grounded, or not prominent enough for an alert."
 
 
 class NewsService:
@@ -124,6 +147,148 @@ class NewsService:
             result.append(story)
         return result
 
+    @staticmethod
+    def _normalized_title(title: str) -> str:
+        value = re.sub(r"\s+", " ", title.strip().lower())
+        value = re.sub(r"[^\w\s]", "", value)
+        return value.strip()
+
+    @staticmethod
+    def _dedupe_key(title: str, url: str | None = None) -> tuple[str, str]:
+        normalized = NewsService._normalized_title(title)
+        host = (urlsplit(url or "").hostname or "").lower().removeprefix("www.")
+        return normalized, host
+
+    @staticmethod
+    def _similarity(a: str, b: str) -> float:
+        a_tokens = set(re.findall(r"\w+", NewsService._normalized_title(a)))
+        b_tokens = set(re.findall(r"\w+", NewsService._normalized_title(b)))
+        if not a_tokens or not b_tokens:
+            return 1.0 if a == b else 0.0
+        shared = len(a_tokens & b_tokens)
+        total = len(a_tokens | b_tokens)
+        return shared / total if total else 0.0
+
+    def create_or_update_event(self, story: dict[str, Any]) -> dict[str, Any] | None:
+        if not story.get("title"):
+            return None
+        importance, score, reason = classify_event(story.get("title", ""), story.get("topic", ""), story.get("body") or "")
+        event_key = self._dedupe_key(story["title"], story.get("url"))
+        conn = get_connection()
+        existing = conn.execute(
+            "SELECT * FROM news_events WHERE normalized_title=? OR source_url=? ORDER BY last_seen_at DESC LIMIT 1",
+            (event_key[0], story.get("url")),
+        ).fetchone()
+        now_iso = now()
+        if existing:
+            current_title = str(existing["title"]) if existing["title"] else story["title"]
+            if self._similarity(current_title, story["title"]) < 0.45 and event_key[1] and existing["source"] and existing["source"] != event_key[1]:
+                existing = None
+        if existing is None:
+            cursor = conn.execute(
+                "INSERT INTO news_events(topic, title, normalized_title, importance, status, summary, location, source_url, source, first_seen_at, last_seen_at, alerted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                (
+                    story.get("topic", "general"),
+                    story["title"],
+                    event_key[0],
+                    importance,
+                    "reported",
+                    (story.get("body") or story.get("title")).strip()[:400],
+                    "",
+                    story.get("url"),
+                    event_key[1],
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        else:
+            event_id = int(existing["id"])
+            conn.execute(
+                "UPDATE news_events SET topic=?, title=?, normalized_title=?, importance=?, summary=?, source_url=?, source=?, last_seen_at=? WHERE id=?",
+                (
+                    story.get("topic", existing["topic"]),
+                    story["title"],
+                    event_key[0],
+                    importance if EVENT_IMPORTANCE_RANK.get(importance, 1) >= EVENT_IMPORTANCE_RANK.get(existing["importance"], 1) else existing["importance"],
+                    (story.get("body") or story.get("title")).strip()[:400],
+                    story.get("url") or existing["source_url"],
+                    event_key[1] or existing["source"],
+                    now_iso,
+                    event_id,
+                ),
+            )
+        conn.execute(
+            "INSERT OR IGNORE INTO event_sources(event_id, url, title, publisher, published_at, retrieved_at, source_type, verification_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event_id,
+                story.get("url"),
+                story.get("title"),
+                story.get("source"),
+                story.get("published_at"),
+                story.get("retrieved_at") or now_iso,
+                "report",
+                "reported" if importance in {"critical", "important"} else "uncertain",
+            ),
+        )
+        conn.commit()
+        event = self.get_event(event_id)
+        conn.close()
+        if event and event["importance"] in {"critical", "important"} and not event["alerted"]:
+            self._alert_event(event)
+        return event
+
+    def _alert_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        if event.get("alerted"):
+            return event
+        title = f"LEON · MAJOR DEVELOPMENT · {event['importance'].upper()}"
+        body = f"{event['title']}\n\n{event['summary'] or 'Follow the briefing for confirmed, reported, and uncertain details.'}"
+        try:
+            notification_service.send(title, body)
+        except Exception:
+            pass
+        conn = get_connection()
+        conn.execute("UPDATE news_events SET alerted=1, last_alerted_at=? WHERE id=?", (now(), event["id"]))
+        conn.commit(); conn.close()
+        event = self.get_event(event["id"])
+        return event
+
+    def get_event(self, event_id: int) -> dict[str, Any] | None:
+        conn = get_connection(); row = conn.execute("SELECT * FROM news_events WHERE id=?", (event_id,)).fetchone(); conn.close()
+        if not row: return None
+        item = dict(row)
+        item["sources"] = self._sources_for_event(event_id)
+        item["briefing"] = self._build_briefing(item)
+        return item
+
+    def _sources_for_event(self, event_id: int) -> list[dict[str, Any]]:
+        conn = get_connection(); rows = conn.execute("SELECT * FROM event_sources WHERE event_id=? ORDER BY retrieved_at DESC, id DESC", (event_id,)).fetchall(); conn.close(); return [dict(r) for r in rows]
+
+    def _build_briefing(self, event: dict[str, Any]) -> dict[str, Any]:
+        sources = event.get("sources") or []
+        source_links = [{"title": source.get("title") or source.get("publisher") or "Source", "url": source.get("url")} for source in sources if source.get("url")]
+        return {
+            "what_happened": event.get("summary") or event.get("title"),
+            "when_it_happened": event.get("last_seen_at") or event.get("first_seen_at"),
+            "where": event.get("location") or (source_links[0]["url"] and urlsplit(source_links[0]["url"]).netloc if source_links else "Global"),
+            "why_it_matters": f"This development is classified as {event.get('importance', 'interesting')} because it affects public safety, geopolitical stability, or major decision-making in the tracked topic.",
+            "what_is_confirmed": "Verified reporting is limited; sources are still being checked." if event.get("importance") in {"important", "interesting"} else "Multiple source reports align on the observed development.",
+            "what_is_uncertain": "Timing, exact scope, and official confirmation may still be unsettled.",
+            "timeline": [{"label": event.get("title"), "time": event.get("last_seen_at") or event.get("first_seen_at")}],
+            "important_developments": [event.get("title")],
+            "source_links": source_links,
+            "related_coverage": source_links,
+            "map_context": None,
+        }
+
+    def events(self) -> list[dict[str, Any]]:
+        conn = get_connection(); rows = conn.execute("SELECT * FROM news_events ORDER BY last_seen_at DESC, id DESC").fetchall(); conn.close(); return [self.get_event(int(row["id"])) for row in rows if row]
+
+    def dismiss_event(self, event_id: int) -> dict[str, Any] | None:
+        conn = get_connection(); row = conn.execute("SELECT * FROM news_events WHERE id=?", (event_id,)).fetchone(); conn.close();
+        if not row: return None
+        conn = get_connection(); conn.execute("UPDATE news_events SET alerted=0, last_alerted_at=? WHERE id=?", (now(), event_id)); conn.commit(); conn.close(); return self.get_event(event_id)
+
     def generate(self, stories: list[dict[str, Any]], schedule: str = "manual", preference: str = "important") -> dict[str, Any]:
         minimum = 4 if preference == "critical" else 3 if preference == "important" else 1
         selected = [s for s in self.relevant(stories) if PREFERENCE_RANK.get(s.get("category", "ignore"), 1) >= minimum]
@@ -163,7 +328,10 @@ class NewsService:
         preferences = []
         for sub in self.subscriptions():
             if sub["enabled"] and (subscription_id is None or sub["id"] == subscription_id) and (sub["schedule"] == schedule or schedule == "scheduled"):
-                stories.extend(self.store_stories(await self.collect(sub["topic"])))
+                collected = await self.collect(sub["topic"])
+                stories.extend(self.store_stories(collected))
+                for story in collected:
+                    self.create_or_update_event(story)
                 preferences.append(sub["preference"])
         preference = "all" if "all" in preferences else "important" if "important" in preferences else "critical"
         briefing = self.generate(stories, schedule, preference)

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
+    "test:health": "node --experimental-strip-types --test tests/healthPolling.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.app.tools import system_tools
+from backend.app.tools import applications
 from backend.app.tools.registry import ToolRegistry
 
 
@@ -60,6 +61,66 @@ async def test_open_app_uses_startfile_without_shell(monkeypatch):
 
     assert opened == ["notepad.exe"]
     assert result == {"tool": "open_app", "app_name": "notepad.exe", "opened": True}
+
+
+@pytest.mark.anyio
+async def test_open_app_resolves_display_name_with_spaces(monkeypatch):
+    opened = []
+    monkeypatch.setattr(system_tools, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(system_tools, "installed_executable", lambda _application: "C:\\Apps\\Code.exe")
+    monkeypatch.setattr(system_tools.os, "startfile", opened.append, raising=False)
+
+    result = await system_tools.OpenAppTool().execute(app_name="VS Code")
+
+    assert opened == ["C:\\Apps\\Code.exe"]
+    assert result == {"tool": "open_app", "app_name": "VS Code", "opened": True}
+
+
+def test_installed_vscode_discovery_checks_user_programs_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(applications.shutil, "which", lambda _name: None)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "Program Files"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "Program Files (x86)"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    executable = tmp_path / "Local" / "Programs" / "Microsoft VS Code" / "Code.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+
+    result = applications.installed_executable(applications.APPLICATIONS[0])
+
+    assert result == str(executable)
+
+
+def test_installed_vscode_discovery_falls_back_to_user_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(applications.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(applications.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "Program Files"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "Program Files (x86)"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    executable = tmp_path / "AppData" / "Local" / "Programs" / "Microsoft VS Code" / "Code.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+
+    result = applications.installed_executable(applications.APPLICATIONS[0])
+
+    assert result == str(executable)
+
+
+def test_installed_application_discovery_uses_running_process_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(applications.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(applications.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "Program Files"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "Program Files (x86)"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    executable = "C:\\Users\\test\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
+    process = SimpleNamespace(info={"name": "Code.exe", "exe": executable})
+    monkeypatch.setattr(applications.psutil, "process_iter", lambda _attrs: [process])
+
+    result = applications.installed_executable(applications.APPLICATIONS[0])
+
+    assert result == executable
 
 
 @pytest.mark.anyio
@@ -142,7 +203,7 @@ def test_read_only_tools_are_safe_and_launch_tools_require_confirmation():
     assert registry.get("list_processes").permission == "SAFE"
     assert registry.get("open_app").permission == "CONFIRM"
     assert registry.get("open_url").permission == "CONFIRM"
-    assert registry.get("open_browser").permission == "CONFIRM"
+    assert registry.get("open_browser").permission == "SAFE"
     assert registry.get("get_page_title").permission == "SAFE"
     assert registry.get("extract_page_text").permission == "SAFE"
     assert registry.get("search_web").permission == "SAFE"

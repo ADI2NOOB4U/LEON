@@ -1,9 +1,10 @@
 import pytest
 
 from backend.app.db.database import get_connection, init_db
+from backend.app.core.planner import planner_service
 from backend.app.jobs.task_manager import create_task, get_task_logs, get_task
 from backend.app.jobs.worker import LeonWorker
-from backend.app.notifications.providers import MockNotificationProvider
+from backend.app.notifications.providers import DesktopNotificationProvider, MockNotificationProvider
 from backend.app.notifications.service import NotificationService
 
 
@@ -26,9 +27,17 @@ def disable_worker_delays(monkeypatch):
 def test_worker_notifies_on_task_completion(monkeypatch):
     disable_worker_delays(monkeypatch)
     task_id = create_task("Finish report")
+    planner_service.create_plan(task_id, ["Finish report"])
     provider = MockNotificationProvider()
 
-    LeonWorker(notifications=NotificationService(provider))._execute(get_task(task_id))
+    class SuccessfulExecutor:
+        def execute(self, step):
+            return f"Finished {step['title']}"
+
+    LeonWorker(
+        SuccessfulExecutor(),
+        notifications=NotificationService(provider),
+    )._execute(get_task(task_id))
 
     assert provider.notifications[0]["title"] == "LEON task completed: Finish report"
     assert "notification_sent" in [entry["stage"] for entry in get_task_logs(task_id)]
@@ -62,3 +71,17 @@ def test_notification_delivery_failure_is_audited_without_raising():
 
     assert sent is False
     assert "notification_failed" in [entry["stage"] for entry in get_task_logs(task_id)]
+
+
+def test_desktop_notifications_fit_windows_balloon_limits(monkeypatch):
+    from plyer import notification
+
+    sent = {}
+    monkeypatch.setattr(notification, "notify", lambda **kwargs: sent.update(kwargs))
+
+    DesktopNotificationProvider().send("T" * 100, "B" * 300)
+
+    assert len(sent["title"]) == 63
+    assert sent["title"].endswith("...")
+    assert len(sent["message"]) == 255
+    assert sent["message"].endswith("...")

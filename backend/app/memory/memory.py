@@ -1,4 +1,5 @@
 import re
+import sqlite3
 
 from backend.app.db.database import get_connection, now
 from backend.app.models.schemas import MemoryCreate, MemoryType
@@ -39,14 +40,19 @@ class MemoryService:
         if not keyword:
             return []
         conn = get_connection()
-        rows = conn.execute(
-            """
-            SELECT * FROM memory
-            WHERE content LIKE ? COLLATE NOCASE
-            ORDER BY updated_at DESC, id DESC
-            """,
-            (f"%{keyword}%",),
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                """
+                SELECT * FROM memory
+                WHERE content LIKE ? COLLATE NOCASE
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (f"%{keyword}%",),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table: memory" not in str(exc):
+                raise
+            rows = []
         conn.close()
         return [dict(row) for row in rows]
 

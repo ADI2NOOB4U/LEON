@@ -21,6 +21,18 @@ class VoiceTurnResponse(BaseModel):
     audio_error: str | None = None
 
 
+class VisionResponse(BaseModel):
+    success: bool
+    description: str
+    observations: list[str]
+    ocr_text: str | None = None
+    confidence_note: str | None = None
+    model: str
+    mode: str
+    width: int
+    height: int
+
+
 class MemoryType(str, Enum):
     fact = "fact"
     preference = "preference"
