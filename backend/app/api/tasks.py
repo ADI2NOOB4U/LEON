@@ -75,12 +75,17 @@ from backend.app.models.schemas import PlanCreate, PlanResponse
 
 
 @router.post("/{task_id}/plan", response_model=PlanResponse)
-async def create_task_plan(task_id: int, request: PlanCreate):
-    from backend.app.core.planner import planner_service
+async def create_task_plan(task_id: int, request: PlanCreate | None = None):
+    from backend.app.core.planner import PlanGenerationError, planner_service
 
     if not get_task(task_id):
         raise HTTPException(status_code=404, detail="Task not found")
-    return planner_service.create_plan(task_id, request.steps)
+    if request is not None:
+        return planner_service.create_plan(task_id, request.steps)
+    try:
+        return await planner_service.generate_plan(task_id)
+    except PlanGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/{task_id}/plan", response_model=PlanResponse)

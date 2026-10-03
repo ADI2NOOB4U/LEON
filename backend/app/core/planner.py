@@ -1,16 +1,39 @@
+import json
+from json import JSONDecodeError
+
+from pydantic import ValidationError
+
+from backend.app.core.router import ModelRouter
 from backend.app.db.database import get_connection, now
 from backend.app.jobs.task_manager import get_task
-from backend.app.models.schemas import PlanStepStatus
+from backend.app.models.schemas import GeneratedPlan, PlannedStep, PlanStepStatus
+
+
+class PlanGenerationError(ValueError):
+    """Raised when the model cannot produce a valid structured plan."""
 
 
 class PlannerService:
-    """Deterministic persistence and status management for task plans."""
+    """Generate and persist plans without executing their steps."""
 
-    def create_plan(self, task_id: int, steps: list[str]) -> dict:
+    def __init__(self, router: ModelRouter | None = None):
+        self.router = router or ModelRouter()
+
+    def create_plan(self, task_id: int, steps: list[str | PlannedStep]) -> dict:
         if not get_task(task_id):
             raise ValueError("Task not found")
         if not steps:
             raise ValueError("A plan must contain at least one step")
+
+        normalized_steps = [
+            PlannedStep(
+                title=step.strip(),
+                description=f"Complete this part of the task: {step.strip()}",
+            )
+            if isinstance(step, str)
+            else PlannedStep.model_validate(step, strict=True)
+            for step in steps
+        ]
 
         timestamp = now()
         conn = get_connection()
@@ -33,14 +56,83 @@ class PlannerService:
                 plan_id = int(cursor.lastrowid)
 
             conn.executemany(
-                "INSERT INTO plan_steps(task_id, step_number, title, status) VALUES (?, ?, ?, 'pending')",
-                [(task_id, number, title) for number, title in enumerate(steps, 1)],
+                "INSERT INTO plan_steps(task_id, step_number, title, description, status) VALUES (?, ?, ?, ?, 'pending')",
+                [
+                    (task_id, number, step.title, step.description)
+                    for number, step in enumerate(normalized_steps, 1)
+                ],
             )
             conn.commit()
         finally:
             conn.close()
 
         return self.get_plan(task_id)
+
+    async def generate_plan(self, task_id: int) -> dict:
+        task = get_task(task_id)
+        if not task:
+            raise ValueError("Task not found")
+
+        request = task["title"]
+        if self.router.provider_name == "mock":
+            plan = GeneratedPlan(
+                steps=[
+                    PlannedStep(
+                        title="Clarify the request",
+                        description=f"Identify the intended outcome, constraints, and success criteria for: {request}",
+                    ),
+                    PlannedStep(
+                        title="Plan the work",
+                        description="Break the request into ordered actions and note any dependencies or information needed.",
+                    ),
+                    PlannedStep(
+                        title="Review the result",
+                        description="Check the eventual result against the request and its success criteria.",
+                    ),
+                ]
+            )
+            return self.create_plan(task_id, plan.steps)
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    'Return only valid JSON with exactly one key, "steps". '
+                    'Its value must be an array of 1 to 100 objects, each with '
+                    'exactly two non-empty string keys: "title" and "description". '
+                    "Do not execute any step."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Create an ordered plan for this request:\n{request}",
+            },
+        ]
+
+        for attempt in range(2):
+            response = await self.router.chat(messages)
+            try:
+                plan = GeneratedPlan.model_validate(json.loads(response), strict=True)
+                return self.create_plan(task_id, plan.steps)
+            except (JSONDecodeError, TypeError, ValidationError) as exc:
+                if attempt == 1:
+                    raise PlanGenerationError(
+                        "The model did not return a valid plan after one retry."
+                    ) from exc
+                messages.extend(
+                    [
+                        {"role": "assistant", "content": response},
+                        {
+                            "role": "user",
+                            "content": (
+                                "That response was invalid. Return only JSON matching "
+                                "the required schema, with no extra keys or prose."
+                            ),
+                        },
+                    ]
+                )
+
+        raise PlanGenerationError("The model did not return a valid plan.")
 
     def get_plan(self, task_id: int) -> dict | None:
         conn = get_connection()
@@ -51,7 +143,7 @@ class PlannerService:
             conn.close()
             return None
         steps = conn.execute(
-            "SELECT id, task_id, step_number, title, status, result FROM plan_steps WHERE task_id = ? ORDER BY step_number ASC",
+            "SELECT id, task_id, step_number, title, description, status, result FROM plan_steps WHERE task_id = ? ORDER BY step_number ASC",
             (task_id,),
         ).fetchall()
         conn.close()
@@ -70,7 +162,7 @@ class PlannerService:
         )
         conn.commit()
         step = conn.execute(
-            "SELECT id, task_id, step_number, title, status, result FROM plan_steps WHERE id = ?",
+            "SELECT id, task_id, step_number, title, description, status, result FROM plan_steps WHERE id = ?",
             (step_id,),
         ).fetchone()
         conn.close()

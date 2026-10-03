@@ -63,3 +63,103 @@ def test_plan_validates_task_and_steps():
     task_id = create_task("Prepare report")
     assert client.post(f"/api/tasks/{task_id}/plan", json={"steps": []}).status_code == 422
     assert client.post(f"/api/tasks/{task_id}/plan", json={"steps": ["   "]}).status_code == 422
+
+
+def test_mock_plan_is_generated_and_persisted_without_execution():
+    task_id = create_task("Organize project notes")
+
+    response = client.post(f"/api/tasks/{task_id}/plan")
+
+    assert response.status_code == 200
+    plan = response.json()
+    assert len(plan["steps"]) == 3
+    assert all(step["title"] and step["description"] for step in plan["steps"])
+    assert [step["status"] for step in plan["steps"]] == ["pending"] * 3
+    assert client.get(f"/api/tasks/{task_id}/plan").json() == plan
+
+
+def test_invalid_model_json_is_retried_once_and_validated(monkeypatch):
+    from backend.app.core.planner import planner_service
+
+    task_id = create_task("Prepare a report")
+
+    class Responses:
+        provider_name = "ollama"
+
+        def __init__(self):
+            self.responses = [
+                '{"steps":[{"title":"Draft","description":"Write it","extra":true}]}',
+                '{"steps":[{"title":"Draft","description":"Write the report"}]}'
+            ]
+            self.calls = 0
+
+        async def chat(self, messages):
+            self.calls += 1
+            return self.responses.pop(0)
+
+    router = Responses()
+    monkeypatch.setattr(planner_service, "router", router)
+
+    response = client.post(f"/api/tasks/{task_id}/plan")
+
+    assert response.status_code == 200
+    assert router.calls == 2
+    assert response.json()["steps"][0]["description"] == "Write the report"
+
+
+def test_invalid_model_json_fails_after_one_retry(monkeypatch):
+    from backend.app.core.planner import planner_service
+
+    task_id = create_task("Prepare a report")
+
+    class InvalidResponses:
+        provider_name = "ollama"
+        calls = 0
+
+        async def chat(self, messages):
+            self.calls += 1
+            return '{"steps": [], "unexpected": true}'
+
+    router = InvalidResponses()
+    monkeypatch.setattr(planner_service, "router", router)
+
+    response = client.post(f"/api/tasks/{task_id}/plan")
+
+    assert response.status_code == 502
+    assert router.calls == 2
+    assert planner_service.get_plan(task_id) is None
+
+
+def test_database_migrates_existing_plan_step_descriptions(tmp_path, monkeypatch):
+    from backend.app.db import database
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "legacy.db")
+    conn = database.get_connection()
+    conn.execute(
+        """
+        CREATE TABLE plan_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            step_number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            result TEXT,
+            UNIQUE(task_id, step_number)
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO plan_steps(task_id, step_number, title) VALUES (1, 1, 'Legacy step')"
+    )
+    conn.commit()
+    conn.close()
+
+    database.init_db()
+
+    conn = database.get_connection()
+    migrated_step = conn.execute(
+        "SELECT description FROM plan_steps WHERE task_id = 1"
+    ).fetchone()
+    conn.close()
+
+    assert migrated_step["description"] == "Complete this part of the task: Legacy step"

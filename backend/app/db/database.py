@@ -97,12 +97,25 @@ def init_db() -> None:
             task_id INTEGER NOT NULL,
             step_number INTEGER NOT NULL,
             title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
             result TEXT,
             UNIQUE(task_id, step_number),
             FOREIGN KEY(task_id) REFERENCES tasks(id)
         )
     """)
+
+    plan_step_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(plan_steps)").fetchall()
+    }
+    if "description" not in plan_step_columns:
+        conn.execute(
+            "ALTER TABLE plan_steps ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+        )
+        conn.execute(
+            "UPDATE plan_steps SET description = 'Complete this part of the task: ' || title"
+        )
 
     conn.commit()
     conn.close()
