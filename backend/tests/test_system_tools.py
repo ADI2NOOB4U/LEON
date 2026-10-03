@@ -7,10 +7,10 @@ from backend.app.tools.registry import ToolRegistry
 
 
 @pytest.mark.anyio
-async def test_get_time_returns_structured_result():
-    result = await system_tools.GetTimeTool().execute()
+async def test_get_datetime_returns_structured_result():
+    result = await system_tools.GetDatetimeTool().execute()
 
-    assert result["tool"] == "get_time"
+    assert result["tool"] == "get_datetime"
     assert result["datetime"]
     assert result["timezone"]
 
@@ -46,6 +46,8 @@ async def test_open_app_validates_input(monkeypatch):
         await tool.execute(app_name="")
     with pytest.raises(ValueError):
         await tool.execute(app_name="notepad.exe & whoami")
+    with pytest.raises(ValueError):
+        await tool.execute(app_name="notepad.exe /x")
 
 
 @pytest.mark.anyio
@@ -60,12 +62,67 @@ async def test_open_app_uses_startfile_without_shell(monkeypatch):
     assert result == {"tool": "open_app", "app_name": "notepad.exe", "opened": True}
 
 
+@pytest.mark.anyio
+async def test_list_processes_returns_structured_result(monkeypatch):
+    monkeypatch.setattr(
+        system_tools.psutil,
+        "process_iter",
+        lambda attrs: [
+            SimpleNamespace(
+                info={"pid": 123, "name": "leon.exe", "status": "running", "username": "user"}
+            )
+        ],
+    )
+
+    result = await system_tools.ListProcessesTool().execute()
+
+    assert result == {
+        "tool": "list_processes",
+        "processes": [{"pid": 123, "name": "leon.exe", "status": "running", "username": "user"}],
+        "count": 1,
+    }
+
+
+@pytest.mark.anyio
+async def test_open_url_validates_and_uses_default_browser(monkeypatch):
+    opened = []
+    monkeypatch.setattr(
+        system_tools.webbrowser,
+        "open",
+        lambda url, new: opened.append((url, new)) or True,
+    )
+    tool = system_tools.OpenUrlTool()
+
+    with pytest.raises(ValueError):
+        await tool.execute(url="file:///C:/Windows/System32")
+    with pytest.raises(ValueError):
+        await tool.execute(url="https://example.com\nhttps://attacker.invalid")
+
+    result = await tool.execute(url="https://example.com/path?q=1")
+
+    assert opened == [("https://example.com/path?q=1", 2)]
+    assert result == {"tool": "open_url", "url": "https://example.com/path?q=1", "opened": True}
+
+
 def test_system_tools_are_registered():
     registry = ToolRegistry()
     system_tools.register_system_tools(registry)
 
     assert [tool.name for tool in registry.list()] == [
-        "get_time",
+        "get_datetime",
         "system_stats",
+        "list_processes",
         "open_app",
+        "open_url",
     ]
+
+
+def test_read_only_tools_are_safe_and_launch_tools_require_confirmation():
+    registry = ToolRegistry()
+    system_tools.register_system_tools(registry)
+
+    assert registry.get("get_datetime").permission == "SAFE"
+    assert registry.get("system_stats").permission == "SAFE"
+    assert registry.get("list_processes").permission == "SAFE"
+    assert registry.get("open_app").permission == "CONFIRM"
+    assert registry.get("open_url").permission == "CONFIRM"

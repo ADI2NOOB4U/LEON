@@ -24,20 +24,22 @@ def test_list_tools():
 
     assert response.status_code == 200
     assert [tool["name"] for tool in response.json()] == [
-        "get_time",
+        "get_datetime",
         "system_stats",
+        "list_processes",
         "open_app",
+        "open_url",
     ]
 
 
 def test_execute_tool_returns_result():
     response = client.post(
-        "/api/tools/get_time",
+        "/api/tools/get_datetime",
         json={"arguments": {}, "confirmed": False},
     )
 
     assert response.status_code == 200
-    assert response.json()["tool"] == "get_time"
+    assert response.json()["tool"] == "get_datetime"
 
 
 def test_unknown_tool_returns_clear_error():
