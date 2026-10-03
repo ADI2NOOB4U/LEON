@@ -29,6 +29,22 @@ def test_list_tools():
         "list_processes",
         "open_app",
         "open_url",
+        "open_browser",
+        "get_page_title",
+        "extract_page_text",
+        "search_web",
+        "git_status",
+        "git_log",
+        "git_diff",
+        "git_branch_list",
+        "coding_execute",
+        "send_email",
+        "send_task_result",
+        "list_directory",
+        "read_file",
+        "create_file",
+        "edit_file",
+        "create_directory",
     ]
 
 

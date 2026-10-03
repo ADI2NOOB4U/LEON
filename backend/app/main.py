@@ -11,16 +11,19 @@ from backend.app.api.tools import router as tools_router
 from backend.app.config.settings import settings
 from backend.app.db.database import init_db
 from backend.app.jobs.worker import worker
+from backend.app.jobs.scheduler import scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     worker.start()
+    scheduler.start()
 
     yield
 
     worker.stop()
+    scheduler.stop()
 
 
 app = FastAPI(

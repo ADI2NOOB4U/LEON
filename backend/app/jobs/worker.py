@@ -13,6 +13,7 @@ from backend.app.jobs.task_manager import (
     set_stage,
     update_task,
 )
+from backend.app.notifications.service import NotificationService, notification_service
 from backend.app.security.permissions import PermissionManager
 from backend.app.tools.registry import ToolRegistry
 from backend.app.tools.system_tools import system_registry
@@ -35,12 +36,14 @@ class LeonWorker:
         executor: StepExecutor | None = None,
         registry: ToolRegistry | None = None,
         permission_manager: PermissionManager | None = None,
+        notifications: NotificationService | None = None,
     ):
         self._running = False
         self._thread = None
         self._executor = executor or TemporaryStepExecutor()
         self._registry = registry or system_registry
         self._permission_manager = permission_manager or PermissionManager()
+        self._notifications = notifications or notification_service
 
     def start(self):
         if self._running:
@@ -175,6 +178,7 @@ class LeonWorker:
                 "completed",
                 "Task completed successfully.",
             )
+            self._notifications.notify_task_outcome(get_task(task_id), "completed")
 
         except Exception as exc:
             current = get_task(task_id)
@@ -213,6 +217,7 @@ class LeonWorker:
                     "failed",
                     str(exc),
                 )
+                self._notifications.notify_task_outcome(get_task(task_id), "failed")
 
     @staticmethod
     def _transition_step(
@@ -245,6 +250,18 @@ class LeonWorker:
 
         log_event(step["task_id"], "tool_execution", f"Executing tool '{tool_name}'.")
         result = asyncio.run(self._registry.execute(tool_name, **arguments))
+        if tool_name == "coding_execute":
+            exit_code = result.get("exit_code") if isinstance(result, dict) else None
+            timed_out = result.get("timed_out") if isinstance(result, dict) else False
+            log_event(
+                step["task_id"],
+                "coding_execution",
+                f"Coding command completed with exit code {exit_code}; timed_out={timed_out}.",
+            )
+            if timed_out or exit_code != 0:
+                raise RuntimeError(
+                    f"Coding command failed (exit code {exit_code}; timed_out={timed_out})."
+                )
         return json.dumps(result, default=str)
 
     def _cancel(self, task_id: int):

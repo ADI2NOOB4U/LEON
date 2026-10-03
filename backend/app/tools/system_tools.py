@@ -9,6 +9,11 @@ from urllib.parse import urlsplit
 import psutil
 
 from backend.app.tools.base import BaseTool
+from backend.app.tools.browser_tools import register_browser_tools
+from backend.app.tools.coding_tools import register_coding_tools
+from backend.app.tools.email_tools import register_email_tools
+from backend.app.tools.filesystem_tools import register_filesystem_tools
+from backend.app.tools.git_tools import register_git_tools
 from backend.app.tools.registry import ToolRegistry
 
 
@@ -158,6 +163,11 @@ def register_system_tools(registry: ToolRegistry) -> ToolRegistry:
     registry.register(ListProcessesTool())
     registry.register(OpenAppTool())
     registry.register(OpenUrlTool())
+    register_browser_tools(registry)
+    register_git_tools(registry)
+    register_coding_tools(registry)
+    register_email_tools(registry)
+    register_filesystem_tools(registry)
     return registry
 
 

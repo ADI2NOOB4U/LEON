@@ -1,1 +1,6 @@
 psutil
+playwright
+dulwich>=0.24,<0.26
+google-api-python-client
+google-auth
+plyer

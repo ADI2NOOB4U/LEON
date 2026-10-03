@@ -13,6 +13,7 @@ def clear_database():
     conn.execute("DELETE FROM plan_steps")
     conn.execute("DELETE FROM task_plans")
     conn.execute("DELETE FROM task_logs")
+    conn.execute("DELETE FROM scheduled_jobs")
     conn.execute("DELETE FROM tasks")
     conn.commit()
     conn.close()

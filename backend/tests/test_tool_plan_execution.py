@@ -44,6 +44,14 @@ class ConfirmTool(EchoTool):
     permission = "CONFIRM"
 
 
+class FailedCodingTool(EchoTool):
+    name = "coding_execute"
+    permission = "CONFIRM"
+
+    async def execute(self, **kwargs):
+        return {"exit_code": 1, "timed_out": False, "stdout": "", "stderr": "failure"}
+
+
 def test_plan_persists_tool_metadata_and_rejects_unknown_tools():
     registry = ToolRegistry()
     registry.register(EchoTool())
@@ -97,4 +105,24 @@ def test_worker_denied_tool_fails_plan_and_preserves_executor(monkeypatch):
     step = planner_service.get_plan(task_id)["steps"][0]
     assert step["status"] == "failed"
     assert get_task(task_id)["status"] == "failed"
+
+
+def test_worker_reports_coding_command_failure_to_task_engine(monkeypatch):
+    disable_worker_delays(monkeypatch)
+    registry = ToolRegistry()
+    registry.register(FailedCodingTool())
+    task_id = create_task("Run coding check", max_retries=0)
+    PlannerService(registry=registry).create_plan(
+        task_id,
+        [{"title": "Check", "description": "Run check", "tool_name": "coding_execute", "arguments": {}}],
+    )
+
+    class ConfirmingPermissions:
+        def can_execute(self, tool, confirmed=False):
+            return True
+
+    LeonWorker(registry=registry, permission_manager=ConfirmingPermissions())._execute(get_task(task_id))
+
+    assert get_task(task_id)["status"] == "failed"
+    assert "coding_execution" in [log["stage"] for log in get_task_logs(task_id)]
 

@@ -114,6 +114,22 @@ def test_system_tools_are_registered():
         "list_processes",
         "open_app",
         "open_url",
+        "open_browser",
+        "get_page_title",
+        "extract_page_text",
+        "search_web",
+        "git_status",
+        "git_log",
+        "git_diff",
+        "git_branch_list",
+        "coding_execute",
+        "send_email",
+        "send_task_result",
+        "list_directory",
+        "read_file",
+        "create_file",
+        "edit_file",
+        "create_directory",
     ]
 
 
@@ -126,3 +142,14 @@ def test_read_only_tools_are_safe_and_launch_tools_require_confirmation():
     assert registry.get("list_processes").permission == "SAFE"
     assert registry.get("open_app").permission == "CONFIRM"
     assert registry.get("open_url").permission == "CONFIRM"
+    assert registry.get("open_browser").permission == "CONFIRM"
+    assert registry.get("get_page_title").permission == "SAFE"
+    assert registry.get("extract_page_text").permission == "SAFE"
+    assert registry.get("search_web").permission == "SAFE"
+    assert registry.get("git_status").permission == "SAFE"
+    assert registry.get("git_log").permission == "SAFE"
+    assert registry.get("git_diff").permission == "SAFE"
+    assert registry.get("git_branch_list").permission == "SAFE"
+    assert registry.get("coding_execute").permission == "CONFIRM"
+    assert registry.get("send_email").permission == "CONFIRM"
+    assert registry.get("send_task_result").permission == "CONFIRM"

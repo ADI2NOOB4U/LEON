@@ -123,6 +123,22 @@ def init_db() -> None:
     if "arguments" not in plan_step_columns:
         conn.execute("ALTER TABLE plan_steps ADD COLUMN arguments TEXT")
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS scheduled_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            run_at TEXT NOT NULL,
+            interval_seconds INTEGER,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            max_retries INTEGER NOT NULL DEFAULT 2,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
     conn.close()
 
