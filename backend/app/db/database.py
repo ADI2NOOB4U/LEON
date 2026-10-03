@@ -98,6 +98,8 @@ def init_db() -> None:
             step_number INTEGER NOT NULL,
             title TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
+            tool_name TEXT,
+            arguments TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
             result TEXT,
             UNIQUE(task_id, step_number),
@@ -116,6 +118,10 @@ def init_db() -> None:
         conn.execute(
             "UPDATE plan_steps SET description = 'Complete this part of the task: ' || title"
         )
+    if "tool_name" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN tool_name TEXT")
+    if "arguments" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN arguments TEXT")
 
     conn.commit()
     conn.close()

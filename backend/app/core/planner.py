@@ -7,6 +7,8 @@ from backend.app.core.router import ModelRouter
 from backend.app.db.database import get_connection, now
 from backend.app.jobs.task_manager import get_task
 from backend.app.models.schemas import GeneratedPlan, PlannedStep, PlanStepStatus
+from backend.app.tools.registry import ToolRegistry
+from backend.app.tools.system_tools import system_registry
 
 
 class PlanGenerationError(ValueError):
@@ -16,8 +18,11 @@ class PlanGenerationError(ValueError):
 class PlannerService:
     """Generate and persist plans without executing their steps."""
 
-    def __init__(self, router: ModelRouter | None = None):
+    def __init__(
+        self, router: ModelRouter | None = None, registry: ToolRegistry | None = None
+    ):
         self.router = router or ModelRouter()
+        self.registry = registry or system_registry
 
     def create_plan(self, task_id: int, steps: list[str | PlannedStep]) -> dict:
         if not get_task(task_id):
@@ -34,6 +39,9 @@ class PlannerService:
             else PlannedStep.model_validate(step, strict=True)
             for step in steps
         ]
+        for step in normalized_steps:
+            if step.tool_name and self.registry.get(step.tool_name) is None:
+                raise ValueError(f"Unknown tool: {step.tool_name}")
 
         timestamp = now()
         conn = get_connection()
@@ -56,9 +64,16 @@ class PlannerService:
                 plan_id = int(cursor.lastrowid)
 
             conn.executemany(
-                "INSERT INTO plan_steps(task_id, step_number, title, description, status) VALUES (?, ?, ?, ?, 'pending')",
+                "INSERT INTO plan_steps(task_id, step_number, title, description, tool_name, arguments, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
                 [
-                    (task_id, number, step.title, step.description)
+                    (
+                        task_id,
+                        number,
+                        step.title,
+                        step.description,
+                        step.tool_name,
+                        json.dumps(step.arguments) if step.arguments is not None else None,
+                    )
                     for number, step in enumerate(normalized_steps, 1)
                 ],
             )
@@ -99,7 +114,9 @@ class PlannerService:
                 "content": (
                     'Return only valid JSON with exactly one key, "steps". '
                     'Its value must be an array of 1 to 100 objects, each with '
-                    'exactly two non-empty string keys: "title" and "description". '
+                    'the required non-empty string keys "title" and "description". '
+                    'A step may additionally include "tool_name" (a registered tool name) '
+                    'and "arguments" (an object for that tool). Use only these keys. '
                     "Do not execute any step."
                 ),
             },
@@ -113,7 +130,10 @@ class PlannerService:
             response = await self.router.chat(messages)
             try:
                 plan = GeneratedPlan.model_validate(json.loads(response), strict=True)
-                return self.create_plan(task_id, plan.steps)
+                try:
+                    return self.create_plan(task_id, plan.steps)
+                except ValueError as exc:
+                    raise PlanGenerationError(str(exc)) from exc
             except (JSONDecodeError, TypeError, ValidationError) as exc:
                 if attempt == 1:
                     raise PlanGenerationError(
@@ -143,22 +163,22 @@ class PlannerService:
             conn.close()
             return None
         steps = conn.execute(
-            "SELECT id, task_id, step_number, title, description, status, result FROM plan_steps WHERE task_id = ? ORDER BY step_number ASC",
+            "SELECT id, task_id, step_number, title, description, tool_name, arguments, status, result FROM plan_steps WHERE task_id = ? ORDER BY step_number ASC",
             (task_id,),
         ).fetchall()
         conn.close()
         result = dict(plan)
-        result["steps"] = [dict(step) for step in steps]
+        result["steps"] = [self._decode_step(step) for step in steps]
         return result
 
     def get_pending_steps(self, task_id: int) -> list[dict]:
         conn = get_connection()
         steps = conn.execute(
-            "SELECT id, task_id, step_number, title, description, status, result FROM plan_steps WHERE task_id = ? AND status = 'pending' ORDER BY step_number ASC",
+            "SELECT id, task_id, step_number, title, description, tool_name, arguments, status, result FROM plan_steps WHERE task_id = ? AND status = 'pending' ORDER BY step_number ASC",
             (task_id,),
         ).fetchall()
         conn.close()
-        return [dict(step) for step in steps]
+        return [self._decode_step(step) for step in steps]
 
     def update_step(
         self, step_id: int, status: PlanStepStatus | str, result: str | None = None
@@ -171,11 +191,18 @@ class PlannerService:
         )
         conn.commit()
         step = conn.execute(
-            "SELECT id, task_id, step_number, title, description, status, result FROM plan_steps WHERE id = ?",
+            "SELECT id, task_id, step_number, title, description, tool_name, arguments, status, result FROM plan_steps WHERE id = ?",
             (step_id,),
         ).fetchone()
         conn.close()
-        return dict(step) if step else None
+        return self._decode_step(step) if step else None
+
+    @staticmethod
+    def _decode_step(step) -> dict:
+        result = dict(step)
+        if result["arguments"] is not None:
+            result["arguments"] = json.loads(result["arguments"])
+        return result
 
 
 planner_service = PlannerService()

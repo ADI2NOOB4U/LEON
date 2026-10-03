@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -47,23 +48,13 @@ class PlanStepStatus(str, Enum):
     skipped = "skipped"
 
 
-class PlanCreate(BaseModel):
-    steps: list[str] = Field(min_length=1, max_length=100)
-
-    @field_validator("steps")
-    @classmethod
-    def steps_must_not_be_blank(cls, steps: list[str]) -> list[str]:
-        normalized = [step.strip() for step in steps]
-        if any(not step for step in normalized):
-            raise ValueError("steps must not contain blank titles")
-        return normalized
-
-
 class PlannedStep(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=2000)
+    tool_name: str | None = Field(default=None, min_length=1, max_length=100)
+    arguments: dict[str, Any] | None = None
 
     @field_validator("title", "description")
     @classmethod
@@ -72,6 +63,30 @@ class PlannedStep(BaseModel):
         if not value:
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("tool_name")
+    @classmethod
+    def tool_name_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class PlanCreate(BaseModel):
+    steps: list[str | PlannedStep] = Field(min_length=1, max_length=100)
+
+    @field_validator("steps")
+    @classmethod
+    def steps_must_not_be_blank(
+        cls, steps: list[str | PlannedStep]
+    ) -> list[str | PlannedStep]:
+        normalized = [step.strip() if isinstance(step, str) else step for step in steps]
+        if any(isinstance(step, str) and not step for step in normalized):
+            raise ValueError("steps must not contain blank titles")
+        return normalized
 
 
 class GeneratedPlan(BaseModel):
@@ -86,6 +101,8 @@ class PlanStepResponse(BaseModel):
     step_number: int
     title: str
     description: str
+    tool_name: str | None = None
+    arguments: dict[str, Any] | None = None
     status: PlanStepStatus
     result: str | None = None
 

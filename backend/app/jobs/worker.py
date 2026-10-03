@@ -1,4 +1,6 @@
-﻿import threading
+﻿import asyncio
+import json
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Protocol
@@ -11,6 +13,9 @@ from backend.app.jobs.task_manager import (
     set_stage,
     update_task,
 )
+from backend.app.security.permissions import PermissionManager
+from backend.app.tools.registry import ToolRegistry
+from backend.app.tools.system_tools import system_registry
 
 
 class StepExecutor(Protocol):
@@ -25,10 +30,17 @@ class TemporaryStepExecutor:
 
 class LeonWorker:
 
-    def __init__(self, executor: StepExecutor | None = None):
+    def __init__(
+        self,
+        executor: StepExecutor | None = None,
+        registry: ToolRegistry | None = None,
+        permission_manager: PermissionManager | None = None,
+    ):
         self._running = False
         self._thread = None
         self._executor = executor or TemporaryStepExecutor()
+        self._registry = registry or system_registry
+        self._permission_manager = permission_manager or PermissionManager()
 
     def start(self):
         if self._running:
@@ -99,7 +111,7 @@ class LeonWorker:
                     current_step = step
                     self._transition_step(step, "running")
                     try:
-                        result = self._executor.execute(step)
+                        result = self._execute_step(step)
                     except Exception as exc:
                         self._transition_step(step, "failed", str(exc))
                         raise
@@ -214,6 +226,26 @@ class LeonWorker:
             f"step_{status}",
             f"Step {step['step_number']} '{step['title']}' transitioned to {status}.",
         )
+
+    def _execute_step(self, step: dict) -> str:
+        """Run a registered tool, or retain the legacy executor for ordinary steps."""
+        tool_name = step.get("tool_name")
+        if not tool_name:
+            return self._executor.execute(step)
+
+        tool = self._registry.get(tool_name)
+        if tool is None:
+            raise ValueError(f"Unknown tool: {tool_name}")
+        if not self._permission_manager.can_execute(tool, confirmed=False):
+            raise PermissionError(f"Tool '{tool_name}' cannot be executed")
+
+        arguments = step.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise ValueError("Tool arguments must be an object")
+
+        log_event(step["task_id"], "tool_execution", f"Executing tool '{tool_name}'.")
+        result = asyncio.run(self._registry.execute(tool_name, **arguments))
+        return json.dumps(result, default=str)
 
     def _cancel(self, task_id: int):
         update_task(
