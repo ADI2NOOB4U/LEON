@@ -72,6 +72,32 @@ def get_next_queued_task():
     return dict(row) if row else None
 
 
+def recover_interrupted_tasks() -> int:
+    """Make tasks left mid-execution safe to resume after a process restart.
+
+    Completed steps are deliberately left untouched.  A running step has no
+    durable commit point around the external tool call, so it is returned to
+    pending and may be retried once; this is the safest behavior for the
+    existing at-least-once execution model.
+    """
+    conn = get_connection()
+    timestamp = now()
+    try:
+        conn.execute(
+            "UPDATE plan_steps SET status = 'pending' WHERE status = 'running'"
+        )
+        changed = conn.execute(
+            """UPDATE tasks
+               SET status = 'queued', current_stage = 'queued', updated_at = ?
+               WHERE status IN ('planning', 'executing', 'verifying')""",
+            (timestamp,),
+        ).rowcount
+        conn.commit()
+        return changed
+    finally:
+        conn.close()
+
+
 def update_task(task_id: int, **fields) -> None:
     allowed = {
         "status",

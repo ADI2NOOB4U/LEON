@@ -1,4 +1,5 @@
 import json
+import re
 from json import JSONDecodeError
 
 from pydantic import ValidationError
@@ -6,6 +7,7 @@ from pydantic import ValidationError
 from backend.app.core.router import ModelRouter
 from backend.app.db.database import get_connection, now
 from backend.app.jobs.task_manager import get_task
+from backend.app.memory.memory import memory_service
 from backend.app.models.schemas import GeneratedPlan, PlannedStep, PlanStepStatus
 from backend.app.tools.registry import ToolRegistry
 from backend.app.tools.system_tools import system_registry
@@ -89,6 +91,18 @@ class PlannerService:
             raise ValueError("Task not found")
 
         request = task["title"]
+        if self._is_datetime_request(request):
+            return self.create_plan(
+                task_id,
+                [
+                    PlannedStep(
+                        title="Get the current date and time",
+                        description="Retrieve the current local date, time, and timezone.",
+                        tool_name="get_datetime",
+                        arguments={},
+                    )
+                ],
+            )
         if self.router.provider_name == "mock":
             plan = GeneratedPlan(
                 steps=[
@@ -122,7 +136,7 @@ class PlannerService:
             },
             {
                 "role": "user",
-                "content": f"Create an ordered plan for this request:\n{request}",
+                "content": self._planning_request(request),
             },
         ]
 
@@ -153,6 +167,26 @@ class PlannerService:
                 )
 
         raise PlanGenerationError("The model did not return a valid plan.")
+
+    @staticmethod
+    def _planning_request(request: str) -> str:
+        context = memory_service.context_for(request)
+        if not context:
+            return f"Create an ordered plan for this request:\n{request}"
+        return (
+            f"Create an ordered plan for this request:\n{request}\n\n"
+            "Relevant remembered context:\n"
+            f"{context}"
+        )
+
+    @staticmethod
+    def _is_datetime_request(request: str) -> bool:
+        normalized = re.sub(r"[^a-z0-9]+", " ", request.lower()).strip()
+        return bool(
+            re.search(r"\b(current|what is|whats|tell me)\b.*\b(date|time)\b", normalized)
+            or re.search(r"\b(date|time)\b.*\b(current|now)\b", normalized)
+            or "date and time" in normalized
+        )
 
     def get_plan(self, task_id: int) -> dict | None:
         conn = get_connection()

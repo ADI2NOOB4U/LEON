@@ -1,6 +1,9 @@
 ﻿from backend.app.core.router import ModelRouter
 
 
+from backend.app.memory.memory import memory_service
+
+
 SYSTEM_PROMPT = """
 You are LEON, a personal AI assistant.
 
@@ -22,10 +25,18 @@ class LeonAgent:
 
     async def chat(self, user_message: str) -> str:
 
+        system_prompt = SYSTEM_PROMPT.strip()
+        memory_context = memory_service.context_for(user_message)
+        if memory_context:
+            system_prompt += (
+                "\n\nRelevant remembered context (use only when relevant; do not "
+                "invent or expose other memories):\n" + memory_context
+            )
+
         messages = [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT.strip(),
+                "content": system_prompt,
             },
             {
                 "role": "user",

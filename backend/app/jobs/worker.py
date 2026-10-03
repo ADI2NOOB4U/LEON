@@ -10,6 +10,7 @@ from backend.app.jobs.task_manager import (
     get_next_queued_task,
     get_task,
     log_event,
+    recover_interrupted_tasks,
     set_stage,
     update_task,
 )
@@ -49,6 +50,9 @@ class LeonWorker:
         if self._running:
             return
 
+        # A process can exit while a tool is in flight.  Requeue only the
+        # interrupted work; completed steps remain durable and are skipped.
+        recover_interrupted_tasks()
         self._running = True
         self._thread = threading.Thread(
             target=self._run,
@@ -84,13 +88,15 @@ class LeonWorker:
         )
 
         try:
-            set_stage(
-                task_id,
-                "planning",
-                10,
-                "Task plan initialized.",
-            )
+            set_stage(task_id, "planning", 10, "Task plan initialized.")
             plan = planner_service.get_plan(task_id)
+
+            if not plan:
+                # Command-created tasks intentionally remain lightweight. The
+                # durable plan is generated here so worker restarts can resume
+                # from the same task record.
+                plan = asyncio.run(planner_service.generate_plan(task_id))
+                log_event(task_id, "planned", "Task plan generated.")
 
             if plan:
                 if self._cancelled(task_id):
@@ -128,48 +134,24 @@ class LeonWorker:
                         current_stage="executing",
                         progress=min(90, int(90 * completed_steps / total_steps)),
                     )
-            else:
-                time.sleep(2)
-                if self._cancelled(task_id):
-                    return self._cancel(task_id)
-
-                set_stage(
-                    task_id,
-                    "executing",
-                    30,
-                    "Execution started.",
-                )
-
-                for progress in (40, 55, 70, 80):
-                    time.sleep(1)
-
-                    if self._cancelled(task_id):
-                        return self._cancel(task_id)
-
-                    update_task(
-                        task_id,
-                        status="executing",
-                        current_stage="executing",
-                        progress=progress,
-                    )
-
             set_stage(
                 task_id,
                 "verifying",
                 90,
                 "Verifying task result.",
             )
-            time.sleep(2)
-
             if self._cancelled(task_id):
                 return self._cancel(task_id)
+
+            self._verify_plan(task_id)
+            final_result = self._result_summary(task_id, task["title"])
 
             update_task(
                 task_id,
                 status="completed",
                 current_stage="completed",
                 progress=100,
-                result=f"Task '{task['title']}' completed successfully.",
+                result=final_result,
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
 
@@ -263,6 +245,25 @@ class LeonWorker:
                     f"Coding command failed (exit code {exit_code}; timed_out={timed_out})."
                 )
         return json.dumps(result, default=str)
+
+    @staticmethod
+    def _result_summary(task_id: int, title: str) -> str:
+        """Return a concise deterministic result assembled from verified steps."""
+        plan = planner_service.get_plan(task_id)
+        completed = [step for step in (plan or {}).get("steps", []) if step["status"] == "completed"]
+        if not completed:
+            return f"Task '{title}' completed successfully."
+        results = [step["result"] for step in completed if step["result"] is not None]
+        suffix = f" ({len(completed)} step{'s' if len(completed) != 1 else ''})"
+        if not results:
+            return f"Task '{title}' completed successfully{suffix}."
+        return f"Task '{title}' completed successfully{suffix}: {'; '.join(results)}"
+
+    @staticmethod
+    def _verify_plan(task_id: int) -> None:
+        plan = planner_service.get_plan(task_id)
+        if plan and any(step["status"] != "completed" for step in plan["steps"]):
+            raise RuntimeError("Task verification failed: not all plan steps completed")
 
     def _cancel(self, task_id: int):
         update_task(

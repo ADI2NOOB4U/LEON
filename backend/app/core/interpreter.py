@@ -1,5 +1,6 @@
 ﻿from backend.app.core.router import ModelRouter
 from pydantic import BaseModel
+from backend.app.memory.memory import memory_service
 
 
 class CommandIntent(BaseModel):
@@ -31,7 +32,7 @@ REQUEST:
 """
 
         response = await self.router.chat([
-            {"role": "system", "content": "You are LEON command interpreter."},
+            {"role": "system", "content": self._system_prompt(message)},
             {"role": "user", "content": prompt},
         ])
 
@@ -42,11 +43,19 @@ REQUEST:
         except Exception:
             return self._fallback(message)
 
+    @staticmethod
+    def _system_prompt(message: str) -> str:
+        prompt = "You are LEON command interpreter."
+        context = memory_service.context_for(message)
+        if context:
+            prompt += "\nRelevant remembered context:\n" + context
+        return prompt
+
     def _fallback(self, message: str) -> CommandIntent:
         words = (
             "build", "create", "make", "develop",
             "research", "analyze", "prepare",
-            "run", "generate", "implement"
+            "run", "generate", "implement", "date", "time"
         )
 
         intent = (
