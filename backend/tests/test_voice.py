@@ -51,6 +51,12 @@ class FakePiperVoice:
         wav_file.writeframes(b"\x00\x00" * 8)
 
 
+@pytest.fixture(autouse=True)
+def use_mock_piper_provider(monkeypatch):
+    """Keep voice service tests independent from backend/.env provider settings."""
+    monkeypatch.setattr(settings, "voice_provider", "piper")
+
+
 def test_voice_turn_transcribes_calls_agent_and_returns_speech(monkeypatch):
     event_loop_thread = threading.get_ident()
     agent = FakeAgent()
