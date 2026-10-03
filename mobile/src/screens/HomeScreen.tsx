@@ -1,0 +1,11 @@
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LeonCore } from '@/components/LeonCore';
+import { Screen } from '@/components/Screen';
+import { colors } from '@/theme';
+import type { RootScreen } from '@/LeonApp';
+
+export function HomeScreen({ onNavigate }: { onNavigate: (screen: RootScreen) => void }) {
+  return <Screen><View style={styles.top}><Text style={styles.wordmark}>LEON</Text><Text style={styles.status}>AWAKE</Text></View><View style={styles.hero}><Text style={styles.eyebrow}>PERSONAL INTELLIGENCE</Text><LeonCore /><Text style={styles.greeting}>Good evening.</Text><Text style={styles.subtitle}>Your work is in orbit. Where shall we begin?</Text></View><View style={styles.actions}><Action title="Begin a conversation" note="Speak with LEON" onPress={() => onNavigate('chat')} /><Action title="Review missions" note="Active tasks and outcomes" onPress={() => onNavigate('tasks')} /></View></Screen>;
+}
+function Action({ title, note, onPress }: { title: string; note: string; onPress: () => void }) { return <Pressable onPress={onPress} style={styles.action}><View><Text style={styles.actionTitle}>{title}</Text><Text style={styles.actionNote}>{note}</Text></View><Text style={styles.arrow}>↗</Text></Pressable>; }
+const styles = StyleSheet.create({ top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, wordmark: { color: colors.text, fontSize: 18, fontWeight: '600', letterSpacing: 5 }, status: { color: colors.good, fontSize: 10, letterSpacing: 1.5 }, hero: { flex: 1, minHeight: 470, alignItems: 'center', justifyContent: 'center' }, eyebrow: { color: colors.gold, fontSize: 10, letterSpacing: 2, marginBottom: 16 }, greeting: { color: colors.text, fontSize: 30, fontWeight: '300', marginTop: 18 }, subtitle: { color: colors.muted, fontSize: 15, textAlign: 'center', marginTop: 8, maxWidth: 260, lineHeight: 22 }, actions: { gap: 10 }, action: { minHeight: 74, padding: 16, borderRadius: 18, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.glass, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, actionTitle: { color: colors.text, fontSize: 15, fontWeight: '600' }, actionNote: { color: colors.muted, fontSize: 12, marginTop: 4 }, arrow: { color: colors.gold, fontSize: 22 } });

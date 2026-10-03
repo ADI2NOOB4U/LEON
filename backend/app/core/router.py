@@ -16,23 +16,33 @@ class MockProvider(ModelProvider):
 class ModelRouter:
 
     def __init__(self):
-        self.provider_name = settings.model_provider.lower()
+        self.provider_name = self._normalize_provider_name(settings.model_provider)
         self.provider = self._create_provider()
 
+    @staticmethod
+    def _normalize_provider_name(name: str | None) -> str:
+        value = (name or "mock").strip().lower()
+        return value if value in {"mock", "ollama", "colibri"} else "mock"
+
     def _create_provider(self) -> ModelProvider:
+        try:
+            if self.provider_name == "ollama":
+                return OllamaProvider()
 
-        if self.provider_name == "ollama":
-            return OllamaProvider()
+            if self.provider_name == "colibri":
+                return ColibriProvider()
 
-        if self.provider_name == "colibri":
-            return ColibriProvider()
-
-        if self.provider_name == "mock":
+            return MockProvider()
+        except Exception:
+            self.provider_name = "mock"
             return MockProvider()
 
-        raise ValueError(
-            f"Unsupported model provider: {self.provider_name}"
-        )
-
     async def chat(self, messages: list[dict[str, str]]) -> str:
-        return await self.provider.chat(messages)
+        try:
+            return await self.provider.chat(messages)
+        except Exception:
+            if self.provider_name != "mock":
+                self.provider_name = "mock"
+                self.provider = MockProvider()
+                return await self.provider.chat(messages)
+            raise

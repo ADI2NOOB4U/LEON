@@ -1,0 +1,27 @@
+{
+  "name": "leon-sanctuary",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.8.1",
+    "motion": "^14.0.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "three": "^0.186.1",
+    "vite": "5.4.21"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/three": "latest",
+    "typescript": "7.0.2"
+  }
+}

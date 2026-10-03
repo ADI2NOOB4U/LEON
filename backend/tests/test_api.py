@@ -26,3 +26,22 @@ def test_chat():
 
     assert response.status_code == 200
     assert "LEON Core is online" in response.json()["assistant"]
+
+
+def test_router_falls_back_to_mock_when_provider_is_unavailable():
+    import asyncio
+
+    from backend.app.core.router import ModelRouter
+
+    router = ModelRouter()
+    router.provider_name = "ollama"
+
+    class FailingProvider:
+        async def chat(self, messages):
+            raise RuntimeError("provider unavailable")
+
+    router.provider = FailingProvider()
+
+    result = asyncio.run(router.chat([{"role": "user", "content": "Hello LEON"}]))
+
+    assert "You said: Hello LEON" in result

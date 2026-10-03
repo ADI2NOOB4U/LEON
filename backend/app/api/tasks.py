@@ -69,3 +69,27 @@ async def cancel_task(task_id: int):
         )
 
     return get_task(task_id)
+
+
+from backend.app.models.schemas import PlanCreate, PlanResponse
+
+
+@router.post("/{task_id}/plan", response_model=PlanResponse)
+async def create_task_plan(task_id: int, request: PlanCreate):
+    from backend.app.core.planner import planner_service
+
+    if not get_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return planner_service.create_plan(task_id, request.steps)
+
+
+@router.get("/{task_id}/plan", response_model=PlanResponse)
+async def get_task_plan(task_id: int):
+    from backend.app.core.planner import planner_service
+
+    if not get_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    plan = planner_service.get_plan(task_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Task plan not found")
+    return plan

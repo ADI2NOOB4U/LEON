@@ -1,0 +1,15 @@
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Screen } from '@/components/Screen';
+import { API_URL, leonApi } from '@/lib/api';
+import { colors } from '@/theme';
+import type { HealthResponse } from '@/types/api';
+
+export function StatusScreen() {
+  const [health, setHealth] = useState<HealthResponse | null>(null); const [checking, setChecking] = useState(true); const [error, setError] = useState<string | null>(null);
+  const check = useCallback(async () => { setChecking(true); try { setError(null); setHealth(await leonApi.health()); } catch (e) { setHealth(null); setError(e instanceof Error ? e.message : 'Connection failed.'); } finally { setChecking(false); } }, []);
+  useEffect(() => { void check(); }, [check]);
+  const online = health?.status === 'online';
+  return <Screen><Text style={styles.eyebrow}>CONNECTION</Text><Text style={styles.title}>System constellation</Text><View style={styles.orb}><View style={[styles.light, online ? styles.online : styles.offline]} /><Text style={styles.connection}>{checking ? 'Checking signal' : online ? 'LEON is online' : 'Signal unavailable'}</Text><Text style={styles.detail}>{checking ? 'Establishing a secure local connection…' : error ?? `${health?.service} · version ${health?.version}`}</Text></View><View style={styles.info}><Text style={styles.label}>BACKEND ENDPOINT</Text><Text selectable style={styles.url}>{API_URL}</Text><Text style={styles.caption}>For a physical Android device, set EXPO_PUBLIC_API_URL to this computer’s LAN address before starting Expo.</Text></View><Pressable onPress={() => { void check(); }} style={styles.button}><Text style={styles.buttonText}>Test connection</Text></Pressable>{checking ? <ActivityIndicator color={colors.violet} style={{ marginTop: 20 }} /> : null}</Screen>;
+}
+const styles = StyleSheet.create({ eyebrow: { color: colors.gold, letterSpacing: 2, fontSize: 10, marginTop: 8 }, title: { color: colors.text, fontSize: 30, fontWeight: '300', marginTop: 10 }, orb: { marginTop: 48, alignItems: 'center' }, light: { height: 94, width: 94, borderRadius: 50, borderWidth: 12, borderColor: 'rgba(255,255,255,.08)', marginBottom: 22 }, online: { backgroundColor: colors.good, shadowColor: colors.good, shadowOpacity: .6, shadowRadius: 18, elevation: 10 }, offline: { backgroundColor: colors.danger }, connection: { color: colors.text, fontSize: 20 }, detail: { color: colors.muted, marginTop: 9, textAlign: 'center', lineHeight: 20, maxWidth: 300 }, info: { borderRadius: 18, padding: 17, backgroundColor: colors.glass, borderWidth: 1, borderColor: colors.line, marginTop: 44 }, label: { color: colors.muted, letterSpacing: 1.4, fontSize: 10 }, url: { color: colors.blue, fontSize: 13, marginTop: 10 }, caption: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 14 }, button: { marginTop: 16, borderRadius: 14, padding: 15, borderWidth: 1, borderColor: colors.line, alignItems: 'center' }, buttonText: { color: colors.text, fontWeight: '600' } });

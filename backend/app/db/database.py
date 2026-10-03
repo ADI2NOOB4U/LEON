@@ -70,6 +70,40 @@ def init_db() -> None:
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            importance REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES tasks(id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS plan_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            step_number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            result TEXT,
+            UNIQUE(task_id, step_number),
+            FOREIGN KEY(task_id) REFERENCES tasks(id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 

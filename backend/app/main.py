@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.api.command import router as command_router
 from backend.app.api.chat import router as chat_router
 from backend.app.api.health import router as health_router
+from backend.app.api.memory import router as memory_router
 from backend.app.api.tasks import router as tasks_router
 from backend.app.api.tools import router as tools_router
 from backend.app.config.settings import settings
@@ -44,6 +45,7 @@ app.include_router(health_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
+app.include_router(memory_router, prefix="/api")
 
 
 @app.get("/")

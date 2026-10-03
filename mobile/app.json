@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "LEON",
+    "slug": "leon-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": { "package": "com.leon.mobile", "adaptiveIcon": { "backgroundColor": "#080B14" } },
+    "plugins": ["react-native-reanimated"],
+    "experiments": { "typedRoutes": false }
+  }
+}
