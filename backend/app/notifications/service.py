@@ -60,5 +60,14 @@ class NotificationService:
         """Deliver a non-task notification through the configured provider."""
         self._provider.send(title, body)
 
+    def send_email(self, subject: str, body: str) -> None:
+        """Deliver an email using the already configured provider, if available."""
+        if not self._email_provider or not self._email_recipient:
+            raise RuntimeError("No email recipient/provider is configured")
+        try:
+            asyncio.run(self._email_provider.send(self._email_recipient, subject, body))
+        except Exception:
+            raise
+
 
 notification_service = NotificationService()

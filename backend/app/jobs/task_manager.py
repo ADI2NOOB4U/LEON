@@ -1,159 +1,98 @@
-﻿from backend.app.db.database import get_connection, log_event, now
+from pathlib import Path
+
+from backend.app.db.database import get_connection, log_event, now
 
 
-def create_task(title: str, max_retries: int = 2) -> int:
+def create_task(title: str, max_retries: int = 2, task_type: str = "standard",
+                research_source_count: int = 5, notify_on_completion: bool = True) -> int:
+    if task_type not in {"standard", "research"}:
+        raise ValueError("task_type must be 'standard' or 'research'")
+    if not isinstance(research_source_count, int) or not 1 <= research_source_count <= 20:
+        raise ValueError("research_source_count must be between 1 and 20")
     timestamp = now()
-
     conn = get_connection()
     cursor = conn.execute(
-        """
-        INSERT INTO tasks
-        (title, status, created_at, updated_at, progress,
-         current_stage, max_retries)
-        VALUES (?, 'queued', ?, ?, 0, 'queued', ?)
-        """,
-        (title, timestamp, timestamp, max_retries),
+        """INSERT INTO tasks
+        (title, task_type, research_source_count, notify_on_completion, status,
+         created_at, updated_at, last_activity, progress, current_stage, max_retries)
+        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, 0, 'queued', ?)""",
+        (title, task_type, research_source_count, int(notify_on_completion), timestamp, timestamp, timestamp, max_retries),
     )
-
     task_id = int(cursor.lastrowid)
-    conn.commit()
-    conn.close()
-
+    conn.commit(); conn.close()
     log_event(task_id, "queued", "Task created.")
     return task_id
 
 
-def get_task(task_id: int):
+def get_task_artifacts(task_id: int) -> list[dict]:
     conn = get_connection()
-    row = conn.execute(
-        "SELECT * FROM tasks WHERE id = ?",
-        (task_id,),
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def get_tasks():
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT * FROM tasks ORDER BY id DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT id, task_id, path, type, size, created_at FROM task_artifacts WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
 
+def get_task(task_id: int):
+    conn = get_connection(); row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone(); conn.close()
+    if not row: return None
+    task = dict(row); task["artifacts"] = get_task_artifacts(task_id); return task
+
+
+def get_tasks():
+    conn = get_connection(); rows = conn.execute("SELECT id FROM tasks ORDER BY id DESC").fetchall(); conn.close()
+    return [get_task(row["id"]) for row in rows]
+
+
+def register_artifact(task_id: int, path: str, artifact_type: str = "file") -> dict | None:
+    file_path = Path(path)
+    if not file_path.is_file(): return None
+    timestamp = now(); conn = get_connection()
+    conn.execute("INSERT OR IGNORE INTO task_artifacts(task_id, path, type, size, created_at) VALUES (?, ?, ?, ?, ?)", (task_id, str(file_path), artifact_type, file_path.stat().st_size, timestamp))
+    row = conn.execute("SELECT id, task_id, path, type, size, created_at FROM task_artifacts WHERE task_id = ? AND path = ? AND type = ?", (task_id, str(file_path), artifact_type)).fetchone()
+    conn.commit(); conn.close()
+    return dict(row) if row else None
+
+
 def get_task_logs(task_id: int):
-    conn = get_connection()
-    rows = conn.execute(
-        """
-        SELECT timestamp, stage, message
-        FROM task_logs
-        WHERE task_id = ?
-        ORDER BY id ASC
-        """,
-        (task_id,),
-    ).fetchall()
-    conn.close()
+    conn = get_connection(); rows = conn.execute("SELECT timestamp, stage, message FROM task_logs WHERE task_id = ? ORDER BY id", (task_id,)).fetchall(); conn.close()
     return [dict(row) for row in rows]
 
 
 def get_next_queued_task():
-    conn = get_connection()
-    row = conn.execute(
-        """
-        SELECT *
-        FROM tasks
-        WHERE status = 'queued'
-        ORDER BY id ASC
-        LIMIT 1
-        """
-    ).fetchone()
-    conn.close()
+    conn = get_connection(); row = conn.execute("SELECT * FROM tasks WHERE status = 'queued' ORDER BY id LIMIT 1").fetchone(); conn.close()
     return dict(row) if row else None
 
 
-def recover_interrupted_tasks() -> int:
-    """Make tasks left mid-execution safe to resume after a process restart.
+def claim_task(task_id: int) -> bool:
+    timestamp = now(); conn = get_connection()
+    changed = conn.execute("UPDATE tasks SET status = 'running', current_stage = 'running', updated_at = ?, last_activity = ? WHERE id = ? AND status = 'queued'", (timestamp, timestamp, task_id)).rowcount
+    conn.commit(); conn.close(); return changed == 1
 
-    Completed steps are deliberately left untouched.  A running step has no
-    durable commit point around the external tool call, so it is returned to
-    pending and may be retried once; this is the safest behavior for the
-    existing at-least-once execution model.
-    """
-    conn = get_connection()
-    timestamp = now()
+
+def recover_interrupted_tasks() -> int:
+    conn = get_connection(); timestamp = now()
     try:
-        conn.execute(
-            "UPDATE plan_steps SET status = 'pending' WHERE status = 'running'"
-        )
-        changed = conn.execute(
-            """UPDATE tasks
-               SET status = 'queued', current_stage = 'queued', updated_at = ?
-               WHERE status IN ('planning', 'executing', 'verifying')""",
-            (timestamp,),
-        ).rowcount
-        conn.commit()
-        return changed
-    finally:
-        conn.close()
+        conn.execute("UPDATE plan_steps SET status = 'pending' WHERE status = 'running'")
+        changed = conn.execute("""UPDATE tasks SET status = 'queued', current_stage = 'queued', updated_at = ?, last_activity = ?
+            WHERE status IN ('running', 'planning', 'executing', 'verifying')""", (timestamp, timestamp)).rowcount
+        conn.commit(); return changed
+    finally: conn.close()
 
 
 def update_task(task_id: int, **fields) -> None:
-    allowed = {
-        "status",
-        "started_at",
-        "completed_at",
-        "updated_at",
-        "result",
-        "error",
-        "progress",
-        "current_stage",
-        "retry_count",
-        "cancel_requested",
-    }
-
-    fields = {
-        key: value
-        for key, value in fields.items()
-        if key in allowed
-    }
-
-    if not fields:
-        return
-
-    fields["updated_at"] = now()
-
+    allowed = {"status", "started_at", "completed_at", "updated_at", "result", "summary", "error", "progress", "current_stage", "retry_count", "cancel_requested", "last_activity"}
+    fields = {key: value for key, value in fields.items() if key in allowed}
+    if not fields: return
+    timestamp = now(); fields["updated_at"] = timestamp; fields.setdefault("last_activity", timestamp)
     assignments = ", ".join(f"{key} = ?" for key in fields)
-    values = list(fields.values()) + [task_id]
-
-    conn = get_connection()
-    conn.execute(
-        f"UPDATE tasks SET {assignments} WHERE id = ?",
-        values,
-    )
-    conn.commit()
-    conn.close()
+    conn = get_connection(); conn.execute(f"UPDATE tasks SET {assignments} WHERE id = ?", [*fields.values(), task_id]); conn.commit(); conn.close()
 
 
 def set_stage(task_id: int, stage: str, progress: int, message: str):
-    update_task(
-        task_id,
-        status=stage,
-        current_stage=stage,
-        progress=progress,
-    )
+    update_task(task_id, status="queued" if stage == "queued" else "running", current_stage=stage, progress=progress)
     log_event(task_id, stage, message)
 
 
 def request_cancel(task_id: int) -> bool:
     task = get_task(task_id)
-
-    if not task:
-        return False
-
-    if task["status"] in {"completed", "failed", "cancelled"}:
-        return False
-
-    update_task(task_id, cancel_requested=1)
-    log_event(task_id, "cancellation", "Cancellation requested.")
-    return True
+    if not task or task["status"] in {"completed", "failed", "cancelled"}: return False
+    update_task(task_id, cancel_requested=1); log_event(task_id, "cancellation", "Cancellation requested."); return True

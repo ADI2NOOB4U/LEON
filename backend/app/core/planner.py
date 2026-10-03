@@ -48,22 +48,21 @@ class PlannerService:
         timestamp = now()
         conn = get_connection()
         try:
+            conn.execute(
+                "INSERT OR IGNORE INTO task_plans(task_id, created_at, updated_at) VALUES (?, ?, ?)",
+                (task_id, timestamp, timestamp),
+            )
             existing = conn.execute(
                 "SELECT id FROM task_plans WHERE task_id = ?", (task_id,)
             ).fetchone()
-            if existing:
-                plan_id = int(existing["id"])
-                conn.execute("DELETE FROM plan_steps WHERE task_id = ?", (task_id,))
-                conn.execute(
-                    "UPDATE task_plans SET updated_at = ? WHERE id = ?",
-                    (timestamp, plan_id),
-                )
-            else:
-                cursor = conn.execute(
-                    "INSERT INTO task_plans(task_id, created_at, updated_at) VALUES (?, ?, ?)",
-                    (task_id, timestamp, timestamp),
-                )
-                plan_id = int(cursor.lastrowid)
+            if existing is None:
+                raise PlanGenerationError("Task plan could not be created")
+            plan_id = int(existing["id"])
+            conn.execute("DELETE FROM plan_steps WHERE task_id = ?", (task_id,))
+            conn.execute(
+                "UPDATE task_plans SET updated_at = ? WHERE id = ?",
+                (timestamp, plan_id),
+            )
 
             conn.executemany(
                 "INSERT INTO plan_steps(task_id, step_number, title, description, tool_name, arguments, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
@@ -141,7 +140,7 @@ class PlannerService:
         ]
 
         for attempt in range(2):
-            response = await self.router.chat(messages)
+            response = await self._chat_with_role(messages, "general")
             try:
                 plan = GeneratedPlan.model_validate(json.loads(response), strict=True)
                 try:
@@ -167,6 +166,15 @@ class PlannerService:
                 )
 
         raise PlanGenerationError("The model did not return a valid plan.")
+
+    async def _chat_with_role(self, messages: list[dict[str, str]], role: str) -> str:
+        """Use explicit routing while keeping small legacy test doubles compatible."""
+        try:
+            return await self.router.chat(messages, role=role)
+        except TypeError as exc:
+            if "unexpected keyword argument" not in str(exc):
+                raise
+            return await self.router.chat(messages)
 
     @staticmethod
     def _planning_request(request: str) -> str:

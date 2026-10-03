@@ -2,6 +2,7 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { InteractionState } from './motion'
+import { COLORS } from '../styles/colorTokens'
 
 export type { InteractionState } from './motion'
 
@@ -16,7 +17,7 @@ const stateEnergy: Record<InteractionState, number> = {
   error: 0.32,
 }
 
-function DustField() {
+function DustField({ state }: { state: InteractionState }) {
   const points = useRef<THREE.Points>(null)
   const geometry = useMemo(() => {
     const positions = new Float32Array(96 * 3)
@@ -32,7 +33,8 @@ function DustField() {
     return dust
   }, [])
   useEffect(() => () => geometry.dispose(), [geometry])
-  return <points ref={points} geometry={geometry}><pointsMaterial color="#b8a77e" size={0.016} transparent opacity={0.4} sizeAttenuation /></points>
+  const tokenState = state === 'hover' || state === 'focus' ? 'idle' : state
+  return <points ref={points} geometry={geometry}><pointsMaterial color={COLORS[tokenState].particle} size={0.016} transparent opacity={0.4} sizeAttenuation /></points>
 }
 
 function Core({ state, onActivate }: { state: InteractionState; onActivate?: () => void }) {
@@ -40,7 +42,7 @@ function Core({ state, onActivate }: { state: InteractionState; onActivate?: () 
   const core = useRef<THREE.Mesh>(null)
   const material = useRef<THREE.MeshStandardMaterial>(null)
   const color = useMemo(
-    () => new THREE.Color(state === 'error' ? '#9c554b' : state === 'success' ? '#a8b8a1' : '#c5a66b'),
+    () => new THREE.Color(COLORS[state === 'hover' || state === 'focus' ? 'idle' : state].accent),
     [state],
   )
   const energy = stateEnergy[state]
@@ -64,11 +66,11 @@ function Core({ state, onActivate }: { state: InteractionState; onActivate?: () 
       onPointerOver={(event) => { event.stopPropagation() }}
     >
       <octahedronGeometry args={[0.48, 0]} />
-      <meshStandardMaterial ref={material} color="#d0b77f" roughness={0.32} metalness={0.72} emissive="#76572c" emissiveIntensity={0.45} flatShading />
+      <meshStandardMaterial ref={material} color="#d0b77f" roughness={0.32} metalness={0.72} emissive={COLORS[state === 'hover' || state === 'focus' ? 'idle' : state].accent} emissiveIntensity={0.45} flatShading />
     </mesh>
     <mesh position={[0, 0.02, 0.51]}>
       <sphereGeometry args={[0.105, 18, 14]} />
-      <meshStandardMaterial color="#e4d6b7" roughness={0.22} metalness={0.38} emissive="#b99658" emissiveIntensity={0.48} />
+      <meshStandardMaterial color={COLORS[state === 'hover' || state === 'focus' ? 'idle' : state].particle} roughness={0.22} metalness={0.38} emissive={COLORS[state === 'hover' || state === 'focus' ? 'idle' : state].accent} emissiveIntensity={0.48} />
     </mesh>
     <mesh position={[0, 0.68, 0]}>
       <octahedronGeometry args={[0.075, 0]} />
@@ -121,7 +123,7 @@ export function LeonCore({ state, onActivate }: { state: InteractionState; onAct
       <pointLight position={[2.2, 2.1, 3]} color="#d9bd83" intensity={12} distance={8} />
       <pointLight position={[-2, -1, 1]} color="#71847d" intensity={3.2} distance={6} />
       <Core state={state} onActivate={onActivate} />
-      <DustField />
+      <DustField state={state} />
     </Canvas>
   )
 }

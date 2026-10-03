@@ -8,6 +8,8 @@ from backend.app.api.health import router as health_router
 from backend.app.api.memory import router as memory_router
 from backend.app.api.tasks import router as tasks_router
 from backend.app.api.tools import router as tools_router
+from backend.app.api.news import router as news_router
+from backend.app.api.voice import router as voice_router
 from backend.app.config.settings import settings
 from backend.app.db.database import init_db
 from backend.app.jobs.worker import worker
@@ -17,6 +19,8 @@ from backend.app.jobs.scheduler import scheduler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    from backend.app.news.service import news_service
+    news_service.ensure_schedules(scheduler)
     worker.start()
     scheduler.start()
 
@@ -49,6 +53,8 @@ app.include_router(chat_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
+app.include_router(news_router, prefix="/api")
+app.include_router(voice_router, prefix="/api")
 
 
 @app.get("/")

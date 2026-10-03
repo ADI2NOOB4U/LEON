@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* === LEON UI — Global Reset === */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: radial-gradient(circle at 72% 38%, #101d2b 0, #080b12 36%, #050608 74%);
+  color: #ffffff;
+  overflow: auto;
+  width: 100vw;
+  min-height: 100vh;
+  cursor: none;
+}
+
+button, a, input { cursor: none; }
+
+@media (pointer: coarse) {
+  body, button, a, input { cursor: auto; }
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+/* === Scrollbar (Minimal, Premium) === */
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* === Selection === */
+
+::selection {
+  background: rgba(0, 168, 255, 0.3);
+  color: #ffffff;
+}
+
+/* === Focus Visible === */
+
+:focus-visible {
+  outline: 1px solid rgba(0, 168, 255, 0.5);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* === Inputs === */
+
+input::placeholder {
+  color: #444444;
+  opacity: 1;
+}
+
+input:disabled {
+  opacity: 0.5;
+}
+
+/* === Transitions (Safety Net) === */
+
+button, a, input {
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+/* === No Select on UI === */
+
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* === Canvas Container === */
+
+canvas {
+  display: block;
+}

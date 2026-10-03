@@ -30,13 +30,9 @@ def test_chat():
 
 def test_openai_compatible_provider_returns_content(monkeypatch):
     import asyncio
-    import importlib
     import httpx
 
-    module = importlib.import_module("backend.app.core.providers.openai_compatible")
-    assert module.Any is not None
-
-    OpenAICompatibleProvider = module.OpenAICompatibleProvider
+    from backend.app.core.providers.openai_compatible import OpenAICompatibleProvider
 
     class DummyResponse:
         def raise_for_status(self):

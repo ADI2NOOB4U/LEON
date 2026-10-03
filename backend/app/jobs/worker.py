@@ -6,18 +6,25 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from backend.app.core.planner import planner_service
+from backend.app.core.coding_agent import CodingAgent
+from backend.app.core.research_agent import ResearchAgent
 from backend.app.jobs.task_manager import (
     get_next_queued_task,
+    claim_task,
     get_task,
     log_event,
     recover_interrupted_tasks,
     set_stage,
     update_task,
+    register_artifact,
 )
 from backend.app.notifications.service import NotificationService, notification_service
 from backend.app.security.permissions import PermissionManager
 from backend.app.tools.registry import ToolRegistry
 from backend.app.tools.system_tools import system_registry
+
+
+MAX_CODING_FIX_ATTEMPTS = 3
 
 
 class StepExecutor(Protocol):
@@ -38,6 +45,7 @@ class LeonWorker:
         registry: ToolRegistry | None = None,
         permission_manager: PermissionManager | None = None,
         notifications: NotificationService | None = None,
+        coding_agent: CodingAgent | None = None,
     ):
         self._running = False
         self._thread = None
@@ -45,6 +53,8 @@ class LeonWorker:
         self._registry = registry or system_registry
         self._permission_manager = permission_manager or PermissionManager()
         self._notifications = notifications or notification_service
+        self._coding_agent = coding_agent or CodingAgent()
+        self._research_agent = ResearchAgent(self._registry, self._permission_manager)
 
     def start(self):
         if self._running:
@@ -72,13 +82,19 @@ class LeonWorker:
                 time.sleep(1)
                 continue
 
-            self._execute(task)
+            if claim_task(task["id"]):
+                claimed_task = get_task(task["id"])
+                if claimed_task:
+                    self._execute(claimed_task)
 
     def _cancelled(self, task_id: int) -> bool:
         task = get_task(task_id)
         return bool(task and task["cancel_requested"])
 
     def _execute(self, task: dict):
+        if task is None:
+            return
+
         task_id = task["id"]
         current_step = None
 
@@ -88,6 +104,26 @@ class LeonWorker:
         )
 
         try:
+            if task.get("task_type") == "research":
+                set_stage(task_id, "researching", 10, "Bounded web research started.")
+                research = asyncio.run(self._research_agent.run(
+                    task_id, task["title"], task.get("research_source_count", 5),
+                    cancelled=lambda: self._cancelled(task_id),
+                ))
+                if self._cancelled(task_id):
+                    return self._cancel(task_id)
+                final_result = research["report"]
+                update_task(
+                    task_id, status="completed", current_stage="completed", progress=100,
+                    result=final_result, summary=final_result,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+                log_event(task_id, "completed", "Research report saved as an artifact.")
+                completed_task = get_task(task_id)
+                if task.get("notify_on_completion", 1) and completed_task:
+                    self._notifications.notify_task_outcome(completed_task, "completed")
+                return
+
             set_stage(task_id, "planning", 10, "Task plan initialized.")
             plan = planner_service.get_plan(task_id)
 
@@ -152,6 +188,7 @@ class LeonWorker:
                 current_stage="completed",
                 progress=100,
                 result=final_result,
+                summary=final_result,
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
 
@@ -160,12 +197,17 @@ class LeonWorker:
                 "completed",
                 "Task completed successfully.",
             )
-            self._notifications.notify_task_outcome(get_task(task_id), "completed")
+            completed_task = get_task(task_id)
+            if task.get("notify_on_completion", 1) and completed_task:
+                self._notifications.notify_task_outcome(completed_task, "completed")
 
         except Exception as exc:
             current = get_task(task_id)
 
-            if current and current["retry_count"] < current["max_retries"]:
+            coding_limit_reached = bool(
+                current_step and current_step.get("tool_name") == "coding_execute"
+            )
+            if current and current["retry_count"] < current["max_retries"] and not coding_limit_reached:
                 retry_count = current["retry_count"] + 1
 
                 update_task(
@@ -199,7 +241,9 @@ class LeonWorker:
                     "failed",
                     str(exc),
                 )
-                self._notifications.notify_task_outcome(get_task(task_id), "failed")
+                failed_task = get_task(task_id)
+                if current and current.get("notify_on_completion", 1) and failed_task:
+                    self._notifications.notify_task_outcome(failed_task, "failed")
 
     @staticmethod
     def _transition_step(
@@ -230,21 +274,76 @@ class LeonWorker:
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object")
 
+        if tool_name == "coding_execute":
+            return self._execute_coding_step(step)
+
         log_event(step["task_id"], "tool_execution", f"Executing tool '{tool_name}'.")
         result = asyncio.run(self._registry.execute(tool_name, **arguments))
-        if tool_name == "coding_execute":
-            exit_code = result.get("exit_code") if isinstance(result, dict) else None
-            timed_out = result.get("timed_out") if isinstance(result, dict) else False
-            log_event(
-                step["task_id"],
-                "coding_execution",
-                f"Coding command completed with exit code {exit_code}; timed_out={timed_out}.",
-            )
-            if timed_out or exit_code != 0:
-                raise RuntimeError(
-                    f"Coding command failed (exit code {exit_code}; timed_out={timed_out})."
-                )
         return json.dumps(result, default=str)
+
+    def _execute_coding_step(self, step: dict) -> str:
+        """Run coding, inspect its result, and request up to three fixes."""
+        task_id = step["task_id"]
+        failure = None
+        last_result = {}
+        for attempt in range(MAX_CODING_FIX_ATTEMPTS + 1):
+            try:
+                arguments = asyncio.run(
+                    self._coding_agent.implementation_for(step, failure=failure)
+                )
+            except Exception as exc:
+                failure = str(exc)
+                log_event(task_id, "coding_execution", f"Coder implementation failed: {failure}")
+                if attempt < MAX_CODING_FIX_ATTEMPTS:
+                    log_event(task_id, "coding_fix", f"Coder fix requested ({attempt + 1}/{MAX_CODING_FIX_ATTEMPTS}).")
+                    continue
+                raise RuntimeError("Coder failed after 3 fix attempts: " + failure) from exc
+            log_event(
+                task_id,
+                "tool_execution",
+                f"Executing coding step attempt {attempt + 1}/{MAX_CODING_FIX_ATTEMPTS + 1}.",
+            )
+            result = asyncio.run(self._registry.execute("coding_execute", **arguments))
+            last_result = result if isinstance(result, dict) else {"result": result}
+            exit_code = last_result.get("exit_code")
+            timed_out = last_result.get("timed_out", False)
+            stdout = str(last_result.get("stdout", ""))
+            stderr = str(last_result.get("stderr", ""))
+            log_event(
+                task_id,
+                "coding_execution",
+                f"Coding command completed with exit code {exit_code}; timed_out={timed_out}; "
+                f"stdout={len(stdout)} bytes; stderr={len(stderr)} bytes.",
+            )
+            for file_result in last_result.get("files", []):
+                if isinstance(file_result, dict) and file_result.get("path"):
+                    register_artifact(task_id, file_result["path"], "file")
+
+            if not timed_out and exit_code == 0:
+                return json.dumps(last_result, default=str)
+
+            failure = json.dumps(
+                {
+                    "exit_code": exit_code,
+                    "timed_out": timed_out,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                }
+            )
+            if attempt < MAX_CODING_FIX_ATTEMPTS:
+                log_event(task_id, "coding_fix", f"Coder fix requested ({attempt + 1}/{MAX_CODING_FIX_ATTEMPTS}).")
+
+        raise RuntimeError(
+            "Coding command failed after 3 fix attempts: "
+            + json.dumps(
+                {
+                    "exit_code": last_result.get("exit_code"),
+                    "timed_out": last_result.get("timed_out", False),
+                    "stdout": last_result.get("stdout", ""),
+                    "stderr": last_result.get("stderr", ""),
+                }
+            )
+        )
 
     @staticmethod
     def _result_summary(task_id: int, title: str) -> str:

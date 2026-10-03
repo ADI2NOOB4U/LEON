@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from '
 import { motion } from 'motion/react'
 import { InstrumentCursor } from './interactions/InstrumentCursor'
 import { getMuted, playSound, setMuted as setSoundMuted, unlockSound } from './interactions/sound'
-import { LeonCore, type InteractionState } from './graphics/LeonCore'
+import type { InteractionState } from './graphics/motion'
+import { NeuralLattice } from '../../leon-ui/src/components/graphics/NeuralLattice'
 import { interactionVariants } from './graphics/motion'
-import { fetchHealth, fetchTasks, sendCommand } from './api/client'
-import type { HealthStatus, Task } from './types/api'
+import { fetchHealth, fetchMemory, fetchTasks, sendCommand, sendVoiceTurn } from './api/client'
+import type { HealthStatus, Memory, Task, VoiceState } from './types/api'
 
 const nav = [
   { glyph: '◌', label: 'Sanctum' },
@@ -22,6 +23,10 @@ function stateFromTask(status?: string): InteractionState {
   if (status === 'completed') return 'success'
   if (status === 'failed') return 'error'
   return 'idle'
+}
+
+function morphingVoidState(state: InteractionState): 'idle' | 'listening' | 'thinking' | 'executing' | 'success' | 'error' {
+  return state === 'hover' || state === 'focus' ? 'idle' : state
 }
 
 function useResettableState() {
@@ -47,10 +52,24 @@ export default function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
   const [command, setCommand] = useState('')
   const [reply, setReply] = useState('')
+  const [memories, setMemories] = useState<Memory[]>([])
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [muted, setMuted] = useState(getMuted)
   const [coreHovered, setCoreHovered] = useState(false)
+  const [voiceState, setVoiceState] = useState<VoiceState>('idle')
+  const [voiceTranscript, setVoiceTranscript] = useState('')
+  const [voiceError, setVoiceError] = useState('')
+  const [voiceAudio, setVoiceAudio] = useState('')
+  const recorder = useRef<MediaRecorder | null>(null)
+  const microphone = useRef<MediaStream | null>(null)
+  const replyAudio = useRef<HTMLAudioElement | null>(null)
   const previousStatuses = useRef(new Map<number, string>())
+
+  useEffect(() => () => {
+    recorder.current?.stop()
+    microphone.current?.getTracks().forEach((track) => track.stop())
+    replyAudio.current?.pause()
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -90,6 +109,13 @@ export default function App() {
           setTasks([])
         }
       }
+
+      try {
+        const nextMemory = await fetchMemory()
+        if (active) setMemories(nextMemory)
+      } catch {
+        if (active) setMemories([])
+      }
     }
 
     void load()
@@ -109,6 +135,7 @@ export default function App() {
     : coreHovered
       ? 'hover'
       : stateFromTask(activeTask?.status)
+  const visualState = connected ? coreState : 'offline'
 
   const handlePointerOver = (event: PointerEvent<HTMLElement>) => {
     const target = event.target
@@ -161,8 +188,121 @@ export default function App() {
     }
   }
 
+  const playVoiceReply = async (audioSource = voiceAudio) => {
+    if (!audioSource) return
+    const audio = new Audio(audioSource)
+    replyAudio.current?.pause()
+    replyAudio.current = audio
+    audio.onended = () => {
+      setVoiceState('idle')
+      showState('idle')
+    }
+    audio.onerror = () => {
+      setVoiceError('LEON replied, but the audio could not be played.')
+      setVoiceState('error')
+      showState('error')
+    }
+    try {
+      await audio.play()
+      setVoiceState('speaking')
+      showState('success')
+    } catch {
+      setVoiceState('idle')
+      setVoiceError('LEON replied. Press play to hear the response.')
+    }
+  }
+
+  const sendRecording = async (recording: Blob) => {
+    if (!recording.size) {
+      setVoiceState('error')
+      setVoiceError('No audio was captured. Try again.')
+      showState('error', 1800)
+      return
+    }
+
+    setVoiceState('processing')
+    showState('thinking')
+    try {
+      const result = await sendVoiceTurn(recording)
+      setVoiceTranscript(result.transcript)
+      setReply(result.assistant)
+      const audioSource = `data:${result.audio_content_type};base64,${result.audio_base64}`
+      setVoiceAudio(audioSource)
+      if (result.audio_error) {
+        setVoiceState('error')
+        setVoiceError(result.audio_error)
+        showState('error', 1800)
+        return
+      }
+      await playVoiceReply(audioSource)
+    } catch (error) {
+      setVoiceState('error')
+      setVoiceError(error instanceof Error ? error.message : 'The voice request failed.')
+      showState('error', 1800)
+    }
+  }
+
+  const startListening = async () => {
+    setVoiceError('')
+    setVoiceTranscript('')
+    setVoiceAudio('')
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setVoiceState('error')
+      setVoiceError('Microphone recording is not supported in this browser.')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      microphone.current = stream
+      const mimeType = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+      ].find((type) => MediaRecorder.isTypeSupported(type))
+      const activeRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream)
+      const chunks: BlobPart[] = []
+      activeRecorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data)
+      }
+      activeRecorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop())
+        microphone.current = null
+        recorder.current = null
+        const recording = new Blob(chunks, { type: activeRecorder.mimeType || 'audio/webm' })
+        void sendRecording(recording)
+      }
+      activeRecorder.start()
+      recorder.current = activeRecorder
+      setVoiceState('listening')
+      showState('listening')
+    } catch (error) {
+      microphone.current?.getTracks().forEach((track) => track.stop())
+      microphone.current = null
+      const name = error instanceof DOMException ? error.name : ''
+      setVoiceState('error')
+      setVoiceError(name === 'NotAllowedError'
+        ? 'Microphone access was denied. Allow microphone access and try again.'
+        : name === 'NotFoundError'
+          ? 'No microphone was found on this device.'
+          : 'The microphone could not be started.')
+      showState('error', 1800)
+    }
+  }
+
+  const stopListening = () => {
+    if (recorder.current?.state === 'recording') {
+      recorder.current.stop()
+      setVoiceState('processing')
+      showState('thinking')
+    }
+  }
+
   return (
-    <main className="app-shell" onPointerOverCapture={handlePointerOver} onClickCapture={handleClickCapture} onPointerDownCapture={unlockSound} onKeyDownCapture={unlockSound}>
+    <main className={`app-shell state-${visualState}`} onPointerOverCapture={handlePointerOver} onClickCapture={handleClickCapture} onPointerDownCapture={unlockSound} onKeyDownCapture={unlockSound}>
       <div className="grain" />
       <InstrumentCursor />
 
@@ -237,8 +377,9 @@ export default function App() {
             {activeNav === 'Memory' ? (
               <div className="stage-message">
                 <span className="message-mark">L·</span>
-                <h2>Memory is not connected.</h2>
-                <p>This workspace has no memory view wired to the current service.</p>
+                <h2>{memories.length ? `${memories.length} memories in orbit.` : 'Memory is quiet.'}</h2>
+                <p>{memories.length ? 'Context available to LEON is held close to the current mission.' : 'No memory has been stored in the service yet.'}</p>
+                {memories.slice(0, 3).map((memory) => <div className="memory-chip" key={memory.id}><span>{memory.type}</span>{memory.content}</div>)}
               </div>
             ) : activeNav === 'Systems' ? (
               <div className="system-readout">
@@ -252,14 +393,16 @@ export default function App() {
                 onPointerEnter={() => setCoreHovered(true)}
                 onPointerLeave={() => setCoreHovered(false)}
               >
-                <LeonCore
-                  state={coreState}
-                  onActivate={() => {
+                <div
+                  style={{ width: '100%', height: '100%' }}
+                  onClick={() => {
                     playSound('focus')
                     showState('focus', 650)
                   }}
-                />
-                <span className="core-caption">{activeNav === 'Missions' ? 'Mission control' : 'At your service'}</span>
+                >
+                  <NeuralLattice state={morphingVoidState(visualState === 'offline' ? 'idle' : visualState)} />
+                </div>
+                <span className="core-caption">{activeNav === 'Missions' ? 'Mission control' : visualState === 'offline' ? 'Connection interrupted' : 'At your service'}</span>
               </div>
             )}
 
@@ -334,6 +477,40 @@ export default function App() {
               </button>
             </form>
             <p className="command-note">Enter to send</p>
+            <section className={`voice-deck voice-${voiceState}`} aria-label="Voice conversation">
+              <div className="voice-deck-heading">
+                <span className="section-kicker">VOICE</span>
+                <span className="voice-state" role="status" aria-live="polite">{voiceState}</span>
+              </div>
+              <p className="voice-transcript" aria-live="polite">
+                {voiceError || (voiceTranscript ? `You · ${voiceTranscript}` : 'No voice transcript yet.')}
+              </p>
+              <div className="voice-actions">
+                <button
+                  className="voice-listen"
+                  type="button"
+                  onClick={voiceState === 'listening' ? stopListening : () => void startListening()}
+                  disabled={voiceState === 'processing' || voiceState === 'speaking'}
+                  aria-label={voiceState === 'listening' ? 'Stop listening' : 'Start listening'}
+                  aria-pressed={voiceState === 'listening'}
+                  data-sound="click"
+                >
+                  <span aria-hidden="true">{voiceState === 'listening' ? '■' : '●'}</span>
+                  {voiceState === 'listening' ? 'Stop listening' : 'Start listening'}
+                </button>
+                <button
+                  className="voice-play"
+                  type="button"
+                  onClick={() => void playVoiceReply()}
+                  disabled={!voiceAudio || voiceState === 'speaking'}
+                  aria-label="Play LEON reply"
+                  title="Play LEON reply"
+                  data-sound="click"
+                >
+                  <span aria-hidden="true">▶</span>
+                </button>
+              </div>
+            </section>
           </section>
         </div>
       </section>

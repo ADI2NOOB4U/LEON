@@ -21,6 +21,11 @@ class NotificationJobExecutor:
 
     def execute(self, job: dict[str, Any]) -> None:
         payload = job["payload"]
+        if payload.get("type") == "news_briefing":
+            import asyncio
+            from backend.app.news.service import news_service
+            asyncio.run(news_service.run(payload.get("schedule", "scheduled"), payload.get("subscription_id")))
+            return
         if payload.get("type") != "notification":
             raise ValueError("Unsupported scheduled job type")
         title = payload.get("title")

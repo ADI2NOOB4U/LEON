@@ -13,6 +13,14 @@ class ChatResponse(BaseModel):
     provider: str
 
 
+class VoiceTurnResponse(BaseModel):
+    transcript: str
+    assistant: str
+    audio_base64: str
+    audio_content_type: str = "audio/wav"
+    audio_error: str | None = None
+
+
 class MemoryType(str, Enum):
     fact = "fact"
     preference = "preference"
@@ -113,3 +121,23 @@ class PlanResponse(BaseModel):
     created_at: str
     updated_at: str
     steps: list[PlanStepResponse]
+
+
+class NewsSubscriptionCreate(BaseModel):
+    topic: str = Field(min_length=1, max_length=100)
+    schedule: str = "morning"
+    preference: str = "important"
+
+
+class NewsSubscriptionUpdate(BaseModel):
+    topic: str | None = Field(default=None, min_length=1, max_length=100)
+    enabled: bool | None = None
+    schedule: str | None = None
+    preference: str | None = None
+
+
+class NewsSubscriptionResponse(NewsSubscriptionCreate):
+    id: int
+    enabled: bool
+    created_at: str
+    updated_at: str

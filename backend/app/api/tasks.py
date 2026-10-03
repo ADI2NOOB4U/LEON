@@ -21,6 +21,9 @@ async def create_new_task(request: TaskCreate):
     task_id = create_task(
         request.title,
         request.max_retries,
+        request.task_type,
+        request.research_source_count,
+        request.notify_on_completion,
     )
     return get_task(task_id)
 

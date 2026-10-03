@@ -274,6 +274,39 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--gold); outl
 .command-deck button:disabled { cursor: not-allowed; opacity: .45; }
 .command-note { grid-column: 2; grid-row: 2; margin: 0 0 17px; color: #77776f; font: 8px 'DM Mono', monospace; text-align: right; }
 .command-note span { padding: 0 5px; color: var(--gold); }
+.voice-deck {
+	grid-column: 2;
+	grid-row: 1 / span 3;
+	align-self: stretch;
+	min-width: 0;
+	margin: 0 0 17px;
+	padding: 11px 0 0 16px;
+	border-left: 1px solid var(--line);
+}
+.voice-deck-heading, .voice-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.voice-state { color: var(--muted); font: 9px 'DM Mono', monospace; text-transform: uppercase; }
+.voice-listening .voice-state { color: #d0a267; }
+.voice-processing .voice-state { color: #d0a267; }
+.voice-speaking .voice-state { color: var(--moss); }
+.voice-error .voice-state { color: #bd7a6d; }
+.voice-transcript { min-height: 32px; margin: 12px 0; color: #aaa79b; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+.voice-actions { justify-content: flex-start; }
+.voice-listen, .voice-play {
+	display: inline-flex;
+	min-height: 34px;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	border: 1px solid rgba(197, 166, 107, .35);
+	background: rgba(197, 166, 107, .08);
+	color: #d4c49f;
+	cursor: pointer;
+}
+.voice-listen { padding: 0 11px; font-size: 10px; }
+.voice-listen span { font-size: 9px; }
+.voice-play { width: 34px; padding: 0; font-size: 10px; }
+.voice-listen:hover:not(:disabled), .voice-play:hover:not(:disabled) { border-color: var(--gold); background: rgba(197, 166, 107, .14); }
+.voice-listen:disabled, .voice-play:disabled { cursor: not-allowed; opacity: .42; }
 
 .instrument-cursor {
 	position: fixed;
@@ -373,6 +406,7 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--gold); outl
 	.reply-line { min-height: 25px; }
 	.command-deck { height: 48px; margin-top: 6px; }
 	.command-note { margin: 9px 0 0; text-align: left; }
+	.voice-deck { margin: 10px 0 0; padding: 13px 0 0; border-top: 1px solid var(--line); border-left: 0; }
 	.stage-message, .system-readout { min-height: 240px; padding: 30px 7%; }
 	.stage-message h2 { font-size: 24px; }
 	.instrument-cursor { display: none; }
@@ -382,3 +416,16 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--gold); outl
 @media (prefers-reduced-motion: reduce) {
 	*, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* State is the visual source of truth. The core and shell shift together. */
+.app-shell { --state-accent: #5677b8; --state-glow: rgba(76, 135, 222, .18); transition: background 800ms ease; }
+.app-shell.state-listening { --state-accent: #ff9d4d; --state-glow: rgba(255, 137, 54, .2); }
+.app-shell.state-thinking { --state-accent: #b66cff; --state-glow: rgba(174, 74, 255, .2); }
+.app-shell.state-executing { --state-accent: #37d69a; --state-glow: rgba(27, 222, 157, .2); }
+.app-shell.state-success { --state-accent: #9ae66b; --state-glow: rgba(145, 231, 91, .2); }
+.app-shell.state-error { --state-accent: #ff775f; --state-glow: rgba(255, 80, 61, .2); }
+.app-shell.state-offline { --state-accent: #89909d; --state-glow: rgba(130, 140, 153, .14); }
+.app-shell::after { content: ''; position: fixed; inset: 16% 18% 12%; pointer-events: none; background: radial-gradient(circle, var(--state-glow), transparent 62%); opacity: .55; transition: background 800ms ease; }
+.state-readout i { background: var(--state-accent) !important; box-shadow: 0 0 12px var(--state-accent) !important; }
+.memory-chip { margin-top: 12px; padding: 11px 13px; border-left: 1px solid var(--state-accent); background: rgba(255,255,255,.025); color: #c4c0b5; font-size: 11px; line-height: 1.5; }
+.memory-chip span { display: block; margin-bottom: 4px; color: var(--state-accent); font: 9px 'DM Mono'; letter-spacing: .12em; text-transform: uppercase; }
