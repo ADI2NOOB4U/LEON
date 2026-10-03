@@ -39,10 +39,14 @@ export interface TaskArtifact {
   created_at: string
 }
 
-export interface CommandResponse {
-  type: 'task' | 'chat'
+export type CommandResponse = {
+  type: 'task' | 'chat' | 'action' | 'failed' | 'confirmation_required'
   message: string
   task?: Task
+  capability?: string
+  action?: string
+  result?: Record<string, unknown>
+  verified?: boolean
 }
 
 export interface MediaStatus {
@@ -72,6 +76,10 @@ export interface VoiceTurnResponse {
   audio_base64: string
   audio_content_type: string
   audio_error: string | null
+  tts_provider?: string | null
+  tts_model?: string | null
+  tts_fallback_reason?: string | null
+  audio_bytes?: number
 }
 
 export interface VisionResponse {

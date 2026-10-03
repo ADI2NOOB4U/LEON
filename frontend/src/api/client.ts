@@ -100,7 +100,7 @@ export async function dismissNewsEvent(eventId: number): Promise<NewsEvent> {
   return request<NewsEvent>(`/news/events/${eventId}/dismiss`, { method: 'POST' })
 }
 
-export async function sendVoiceTurn(recording: Blob): Promise<VoiceTurnResponse> {
+export async function sendVoiceTurn(recording: Blob, timeoutMs = 45000): Promise<VoiceTurnResponse> {
   const form = new FormData()
   const mimeType = recording.type.split(';', 1)[0].toLowerCase()
   const extension: Record<string, string> = {
@@ -115,10 +115,22 @@ export async function sendVoiceTurn(recording: Blob): Promise<VoiceTurnResponse>
     ? `recording.${extension[mimeType]}`
     : 'recording'
   form.append('audio', recording, filename)
-  return request<VoiceTurnResponse>('/voice/turn', {
-    method: 'POST',
-    body: form,
-  })
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await request<VoiceTurnResponse>('/voice/turn', {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('The voice request timed out. Try again.')
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
 
 export async function analyzeVision(image: Blob, prompt: string, mode: VisionMode): Promise<VisionResponse> {

@@ -19,6 +19,10 @@ class VoiceTurnResponse(BaseModel):
     audio_base64: str
     audio_content_type: str = "audio/wav"
     audio_error: str | None = None
+    tts_provider: str | None = None
+    tts_model: str | None = None
+    tts_fallback_reason: str | None = None
+    audio_bytes: int = 0
 
 
 class VisionResponse(BaseModel):

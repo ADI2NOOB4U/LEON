@@ -40,6 +40,24 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+def is_datetime_request(text: str) -> bool:
+    """Detect a direct request for the local clock, not live-world research."""
+    value = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    if not value:
+        return False
+    return bool(
+        re.search(
+            r"^(?:leon )?(?:please )?(?:what(?:s| is)?(?: the)?|tell me(?: the)?|give me(?: the)?)\s+"
+            r"(?:current )?(?:date and time|time and date|date|time)\b",
+            value,
+        )
+        or re.search(r"\b(?:current|today s|todays)\s+(?:date and time|time and date|date|time)\b", value)
+        or re.search(r"\b(?:date and time|time and date|date|time)\b(?:\s+\w+){0,3}\s+\b(?:is it|now|currently)\b", value)
+        or "date and time" in value
+        or "time and date" in value
+    )
+
+
 def classify_command(text: str) -> CapabilityIntent:
     """Classify obvious commands without invoking a model.
 
@@ -50,7 +68,7 @@ def classify_command(text: str) -> CapabilityIntent:
     if not value:
         return CapabilityIntent(Capability.CHAT)
 
-    if re.search(r"\b(what time|what date|current time|today'?s date|date and time)\b", value):
+    if is_datetime_request(value):
         return CapabilityIntent(Capability.DATETIME, "current")
     if re.search(r"\b(cancel|stop)\b.*\b(task|that|what you(?:'re| are) doing)\b|^stop$|^cancel that$", value):
         return CapabilityIntent(Capability.TASKS, "cancel")

@@ -8,7 +8,8 @@ import { VisionPanel } from './components/VisionPanel'
 import { interactionVariants } from './graphics/motion'
 import { connectSpotify, dismissNewsEvent, disconnectSpotify, fetchMediaStatus, fetchMemory, fetchNewsEvents, fetchSpotifyStatus, fetchTasks, sendCommand, sendVoiceTurn } from './api/client'
 import { useHealthPolling } from './hooks/useHealthPolling'
-import type { HealthStatus, MediaStatus, Memory, NewsEvent, SpotifyStatus, Task, VoiceState } from './types/api'
+import type { HealthConnectionState } from './api/healthPoller'
+import type { HealthStatus, MediaStatus, Memory, NewsEvent, SpotifyStatus, Task, VoiceState, VoiceTurnResponse } from './types/api'
 
 const nav = [
   { glyph: '◌', label: 'Sanctum' },

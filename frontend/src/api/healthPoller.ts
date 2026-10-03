@@ -1,6 +1,6 @@
 import type { HealthStatus } from '../types/api'
 
-export type HealthConnectionState = 'connecting' | 'online' | 'offline'
+export type HealthConnectionState = 'connecting' | 'online' | 'offline' | 'error'
 
 interface HealthPollerOptions {
   check: (signal: AbortSignal) => Promise<HealthStatus>
@@ -49,14 +49,20 @@ export function createHealthPoller({
       state = 'online'
       health = nextHealth
       onChange(state, health)
-    } catch {
+    } catch (error) {
       if (!active || (requestController.signal.aborted && !timedOut)) return
-      failures += 1
-      if (failures >= failureThreshold) {
-        state = 'offline'
-        health = null
+      const message = error instanceof Error ? error.message : ''
+      if (message.includes('unexpected shape')) {
+        state = 'error'
+        onChange(state, health)
+      } else {
+        failures += 1
+        if (failures >= failureThreshold) {
+          state = 'offline'
+          health = null
+        }
+        onChange(state, health)
       }
-      onChange(state, health)
     } finally {
       if (timeout !== undefined) clearTimeout(timeout)
       timeout = undefined

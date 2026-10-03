@@ -7,7 +7,8 @@ from backend.app.core.planner import planner_service
 from backend.app.jobs.task_manager import create_task, get_task, log_event
 from backend.app.jobs.task_manager import get_tasks, request_cancel
 from backend.app.core.action_authority import ActionAuthority
-from backend.app.tools.system_tools import system_registry
+from backend.app.core.capabilities import Capability
+from backend.app.tools.system_tools import format_local_datetime, system_registry
 import re
 from backend.app.tools.media_tools import media_registry
 from backend.app.vision.screen import ScreenCaptureError, capture_screen
@@ -26,6 +27,17 @@ class CommandRequest(BaseModel):
 @router.post("")
 async def command(request: CommandRequest):
     result = await interpreter.interpret(request.message)
+
+    if result.capability == Capability.DATETIME.value:
+        payload = await ActionAuthority(system_registry).execute("get_datetime", {})
+        return {
+            "type": "action",
+            "capability": result.capability,
+            "action": result.action or "current",
+            "message": format_local_datetime(payload),
+            "result": payload,
+            "verified": True,
+        }
 
     if result.capability == "TASKS" and result.action == "list":
         tasks = get_tasks()[:10]

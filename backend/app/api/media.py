@@ -12,7 +12,14 @@ router = APIRouter(prefix="/media", tags=["Media"])
 @router.get("/status")
 async def media_status():
     """Return verified current media state without starting playback."""
-    return await ActionAuthority(media_registry).execute("media_control", {"action": "current"})
+    try:
+        return await ActionAuthority(media_registry).execute("media_control", {"action": "current"})
+    except (PermissionError, ValueError, OSError, RuntimeError):
+        return {
+            "success": False,
+            "state": "UNAVAILABLE",
+            "message": "Media status is unavailable.",
+        }
 
 
 @router.get("/providers")

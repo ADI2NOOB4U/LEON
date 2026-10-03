@@ -3,7 +3,7 @@ import re
 from backend.app.core.router import ModelRouter
 from pydantic import BaseModel, Field
 from backend.app.memory.memory import memory_service
-from backend.app.core.capabilities import Capability, CapabilityIntent, classify_command
+from backend.app.core.capabilities import Capability, CapabilityIntent, classify_command, is_datetime_request
 
 
 class CommandIntent(BaseModel):
@@ -22,17 +22,17 @@ class LeonInterpreter:
 
     async def interpret(self, message: str) -> CommandIntent:
         proposal = classify_command(message)
-        if self._is_simple_chat(message):
-            return CommandIntent(intent="chat", title="")
-        if self.router.is_datetime_request(message):
+        if proposal.capability == Capability.DATETIME or is_datetime_request(message):
             return CommandIntent(
-                intent="task",
+                intent="action",
                 title=message,
                 task_type="standard",
                 capability=Capability.DATETIME.value,
                 action="current",
                 arguments={},
             )
+        if self._is_simple_chat(message):
+            return CommandIntent(intent="chat", title="")
         if proposal.capability != Capability.CHAT:
             return self._fallback(message, proposal)
         if self.router.provider_name == "mock":

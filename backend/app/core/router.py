@@ -1,6 +1,7 @@
 import re
 
 from backend.app.config.settings import settings
+from backend.app.core.capabilities import is_datetime_request
 from backend.app.core.providers.base import ModelProvider
 from backend.app.core.providers.openai_compatible import ColibriProvider, GeminiProvider, OllamaProvider
 from backend.app.security.cloud_privacy import (
@@ -78,12 +79,7 @@ class ModelRouter:
 
     @staticmethod
     def is_datetime_request(text: str) -> bool:
-        normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
-        return bool(
-            re.search(r"\b(current|what is|whats|tell me)\b.*\b(date|time)\b", normalized)
-            or re.search(r"\b(date|time)\b.*\b(current|now)\b", normalized)
-            or "date and time" in normalized
-        )
+        return is_datetime_request(text)
 
     @staticmethod
     def is_live_world_request(text: str) -> bool:

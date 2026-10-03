@@ -56,6 +56,30 @@ class GetDatetimeTool(BaseTool):
         }
 
 
+def format_local_datetime(result: dict[str, Any]) -> str:
+    """Turn a get_datetime payload into a current, non-guessed user reply."""
+    zone = str(result.get("timezone") or "").strip()
+    raw = result.get("datetime")
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+        spoken_date = parsed.strftime("%d %B %Y")
+        spoken_time = parsed.strftime("%I:%M %p").lstrip("0")
+        day = parsed.strftime("%A")
+    except (TypeError, ValueError):
+        spoken_date = str(result.get("date") or "").strip()
+        spoken_time = str(result.get("time") or "").strip()
+        day = str(result.get("day_of_week") or "").strip()
+    when = ", ".join(part for part in (day, spoken_date) if part)
+    zone_suffix = f" {zone}" if zone else ""
+    if when and spoken_time:
+        return f"It's {when}, {spoken_time}{zone_suffix}."
+    if spoken_time:
+        return f"It's {spoken_time}{zone_suffix}."
+    if when:
+        return f"It's {when}{zone_suffix}."
+    return "The local clock could not be read."
+
+
 class SystemStatsTool(BaseTool):
     name = "system_stats"
     description = "Return CPU, memory, and disk usage statistics."

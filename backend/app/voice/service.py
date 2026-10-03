@@ -145,8 +145,13 @@ class LeonVoiceService:
             else self._tts_voice is not None
         )
         tts_started = time.perf_counter()
+        tts_provider_used: str | None = None
+        tts_model_used: str | None = None
+        tts_fallback_reason: str | None = None
         try:
-            speech = await run_in_threadpool(self._synthesize, assistant)
+            speech, tts_provider_used, tts_model_used, tts_fallback_reason = (
+                await run_in_threadpool(self._synthesize, assistant)
+            )
             audio_error = None
         except VoiceServiceError as exc:
             speech = b""
@@ -156,14 +161,18 @@ class LeonVoiceService:
         logger.info(
             "Voice pipeline completed (stt_ms=%.1f, llm_ms=%.1f, tts_ms=%.1f, "
             "total_ms=%.1f, stt_model_reused=%s, tts_provider_reused=%s, "
-            "tts_provider=%s, tts_error=%s).",
+            "tts_provider=%s, tts_model=%s, fallback=%s, audio_bytes=%d, "
+            "tts_error=%s).",
             stt_ms,
             llm_ms,
             tts_ms,
             total_ms,
             stt_model_reused,
             tts_provider_reused,
-            self.voice_provider,
+            tts_provider_used or self.voice_provider,
+            tts_model_used,
+            bool(tts_fallback_reason),
+            len(speech),
             bool(audio_error),
         )
         return {
@@ -172,6 +181,10 @@ class LeonVoiceService:
             "audio_base64": base64.b64encode(speech).decode("ascii"),
             "audio_content_type": "audio/wav",
             "audio_error": audio_error,
+            "tts_provider": tts_provider_used,
+            "tts_model": tts_model_used,
+            "tts_fallback_reason": tts_fallback_reason,
+            "audio_bytes": len(speech),
         }
 
     def _load_stt_model(self) -> Any:
@@ -349,13 +362,16 @@ class LeonVoiceService:
             if audio_path:
                 Path(audio_path).unlink(missing_ok=True)
 
-    def _synthesize(self, text: str) -> bytes:
+    def _synthesize(self, text: str) -> tuple[bytes, str, str, str | None]:
         if self.voice_provider == "fish_audio":
             try:
                 speech = self._load_fish_audio_tts().synthesize(text)
                 logger.info("Fish Audio TTS synthesis succeeded.")
-                return speech
+                return speech, "fish_audio", settings.fish_audio_model, None
             except Exception as fish_error:
+                fallback_reason = (
+                    f"Fish Audio failed ({type(fish_error).__name__}); using Piper."
+                )
                 logger.warning(
                     "Fish Audio TTS failed; attempting Piper fallback (%s).",
                     type(fish_error).__name__,
@@ -363,12 +379,17 @@ class LeonVoiceService:
                 try:
                     speech = self._synthesize_piper(text)
                     logger.info("Piper TTS fallback succeeded.")
-                    return speech
+                    return (
+                        speech,
+                        "piper",
+                        self.tts_model_path.stem,
+                        fallback_reason,
+                    )
                 except VoiceServiceError as piper_error:
                     raise VoiceServiceError(
                         f"{fish_error} Piper fallback also failed: {piper_error}"
                     ) from piper_error
-        return self._synthesize_piper(text)
+        return self._synthesize_piper(text), "piper", self.tts_model_path.stem, None
 
     def _synthesize_piper(self, text: str) -> bytes:
         voice = self._load_tts_voice()

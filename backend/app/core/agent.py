@@ -1,8 +1,7 @@
-﻿from backend.app.core.router import ModelRouter
-
-
+﻿from backend.app.core.capabilities import is_datetime_request
+from backend.app.core.router import ModelRouter, final_model_response
 from backend.app.memory.memory import memory_service
-from backend.app.core.router import final_model_response
+from backend.app.tools.system_tools import GetDatetimeTool, format_local_datetime
 
 
 SYSTEM_PROMPT = """
@@ -24,7 +23,16 @@ class LeonAgent:
     def __init__(self):
         self.router = ModelRouter()
 
+    async def _local_datetime_reply(self, user_message: str) -> str | None:
+        if not is_datetime_request(user_message):
+            return None
+        payload = await GetDatetimeTool().execute()
+        return format_local_datetime(payload)
+
     async def chat(self, user_message: str) -> str:
+        datetime_reply = await self._local_datetime_reply(user_message)
+        if datetime_reply is not None:
+            return datetime_reply
         route_for_text = getattr(self.router, "route_for_text", None)
         role = route_for_text(user_message) if route_for_text else "general"
         system_prompt = SYSTEM_PROMPT.strip()
@@ -56,6 +64,9 @@ class LeonAgent:
 
     async def chat_fast(self, user_message: str) -> str:
         """Low-overhead local conversation path used by voice turns."""
+        datetime_reply = await self._local_datetime_reply(user_message)
+        if datetime_reply is not None:
+            return datetime_reply
         route_for_text = getattr(self.router, "route_for_text", None)
         role = route_for_text(user_message) if route_for_text else "general"
         messages = [
