@@ -104,6 +104,29 @@ class LeonVoiceService:
             "fish_audio" if configured_provider in {"fish", "fish_audio"} else "piper"
         )
 
+    async def synthesize_text(self, text: str) -> bytes:
+        text = text.strip()
+        if not text:
+            raise VoiceServiceError(
+                "There is no text to read aloud.",
+                422,
+                "empty_speech_text",
+            )
+        if len(text) > 10000:
+            raise VoiceServiceError(
+                "The text to read aloud is too long.",
+                422,
+                "speech_text_too_long",
+            )
+
+        speech, _, _, _ = await run_in_threadpool(self._synthesize, text)
+        if not speech:
+            raise VoiceServiceError(
+                "LEON's voice provider returned empty audio.",
+                code="empty_speech_audio",
+            )
+        return speech
+
     async def process(self, audio: bytes, suffix: str) -> dict[str, str | None]:
         total_started = time.perf_counter()
         if not audio:
@@ -126,11 +149,23 @@ class LeonVoiceService:
 
         llm_started = time.perf_counter()
         try:
-            # Voice turns do not need the full memory/planner path.  Keep the
-            # same router and security checks, but avoid an extra SQLite scan
-            # for ordinary conversation.
-            fast_chat = getattr(self.agent, "chat_fast", None)
-            assistant = await (fast_chat(transcript) if fast_chat else self.agent.chat(transcript))
+            # Voice transcripts enter the same Intelligence Core as typed
+            # commands. Deterministic actions use the normal command executor;
+            # ordinary conversation keeps the low-latency agent path.
+            from backend.app.intelligence import intelligence_core
+            decision = intelligence_core.route(transcript)
+            if decision.route in {"system.datetime", "media.spotify", "screen.local", "desktop.applications", "system.stats", "memory.local"}:
+                from backend.app.api.command import CommandRequest, command
+                command_result = await command(
+                    CommandRequest(
+                        message=transcript,
+                        confirmed=decision.route == "media.spotify",
+                    )
+                )
+                assistant = str(command_result.get("message", "LEON completed the request."))
+            else:
+                fast_chat = getattr(self.agent, "chat_fast", None)
+                assistant = await (fast_chat(transcript) if fast_chat else self.agent.chat(transcript))
         except Exception as exc:
             raise VoiceServiceError(
                 "LEON could not process the transcript.",
@@ -335,8 +370,24 @@ class LeonVoiceService:
 
             audio_samples = self._decode_audio(audio_path)
             model = self._load_stt_model()
-            segments, _ = model.transcribe(audio_samples, vad_filter=True)
-            transcript = " ".join(segment.text.strip() for segment in segments).strip()
+            transcript = ""
+            for vad_filter in (True, False):
+                segments, _ = model.transcribe(
+                    audio_samples,
+                    vad_filter=vad_filter,
+                )
+                transcript = " ".join(
+                    segment.text.strip() for segment in segments
+                ).strip()
+                if transcript:
+                    if not vad_filter:
+                        logger.info(
+                            "Speech transcription recovered without VAD "
+                            "(extension=%s, bytes=%d).",
+                            suffix,
+                            len(audio),
+                        )
+                    break
             if not transcript:
                 raise VoiceServiceError(
                     "No speech was detected. Try speaking closer to the microphone.",

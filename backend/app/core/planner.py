@@ -8,6 +8,7 @@ from backend.app.core.router import ModelRouter
 from backend.app.db.database import get_connection, now
 from backend.app.jobs.task_manager import get_task
 from backend.app.memory.memory import memory_service
+from backend.app.memory.profile import personal_memory_service
 from backend.app.models.schemas import GeneratedPlan, PlannedStep, PlanStepStatus
 from backend.app.tools.registry import ToolRegistry
 from backend.app.tools.system_tools import system_registry
@@ -45,6 +46,9 @@ class PlannerService:
         for step in normalized_steps:
             if step.tool_name and self.registry.get(step.tool_name) is None:
                 raise ValueError(f"Unknown tool: {step.tool_name}")
+        for number, step in enumerate(normalized_steps, 1):
+            if any(dependency < 1 or dependency >= number for dependency in step.depends_on):
+                raise ValueError(f"Step {number} has an invalid dependency")
 
         timestamp = now()
         conn = get_connection()
@@ -66,7 +70,7 @@ class PlannerService:
             )
 
             conn.executemany(
-                "INSERT INTO plan_steps(task_id, step_number, title, description, tool_name, arguments, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+                "INSERT INTO plan_steps(task_id, step_number, title, description, tool_name, arguments, expected_result, verification_method, permission_level, timeout_seconds, retry_limit, depends_on, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
                 [
                     (
                         task_id,
@@ -75,6 +79,12 @@ class PlannerService:
                         step.description,
                         step.tool_name,
                         json.dumps(step.arguments) if step.arguments is not None else None,
+                        step.expected_result,
+                        step.verification_method,
+                        step.permission_level,
+                        step.timeout_seconds,
+                        step.retry_limit,
+                        json.dumps(step.depends_on),
                     )
                     for number, step in enumerate(normalized_steps, 1)
                 ],
@@ -115,7 +125,10 @@ class PlannerService:
             )]) if self.registry.get("media_control") else self.create_plan(task_id, [
                 PlannedStep(title="Resolve media request", description="Determine whether a supported media provider is available.")
             ])
-        if self.router.provider_name == "mock":
+        # A mission must remain inspectable even when no planning provider is
+        # configured. This creates a conservative plan; it does not claim the
+        # objective was executed or verified.
+        if self.router.provider_name in {"mock", "gemini"}:
             plan = GeneratedPlan(
                 steps=[
                     PlannedStep(
@@ -142,7 +155,10 @@ class PlannerService:
                     'Its value must be an array of 1 to 100 objects, each with '
                     'the required non-empty string keys "title" and "description". '
                     'A step may additionally include "tool_name" (a registered tool name) '
-                    'and "arguments" (an object for that tool). Use only these keys. '
+                    'and "arguments" (an object for that tool), "expected_result", '
+                    '"verification_method", "permission_level", "timeout_seconds", '
+                    '"retry_limit", and "depends_on". Use only registered tools. '
+                    'Every step must define how its result will be verified. '
                     "Do not execute any step."
                 ),
             },
@@ -192,6 +208,9 @@ class PlannerService:
     @staticmethod
     def _planning_request(request: str) -> str:
         context = memory_service.context_for(request)
+        personal_context = personal_memory_service.context_for(request, max_chars=1600)
+        if personal_context:
+            context = "\n".join(filter(None, [context, personal_context]))
         if not context:
             return f"Create an ordered plan for this request:\n{request}"
         return (
@@ -209,7 +228,7 @@ class PlannerService:
             conn.close()
             return None
         steps = conn.execute(
-            "SELECT id, task_id, step_number, title, description, tool_name, arguments, status, result FROM plan_steps WHERE task_id = ? ORDER BY step_number ASC",
+            "SELECT id, task_id, step_number, title, description, tool_name, arguments, expected_result, verification_method, permission_level, timeout_seconds, retry_limit, depends_on, status, result FROM plan_steps WHERE task_id = ? ORDER BY step_number ASC",
             (task_id,),
         ).fetchall()
         conn.close()
@@ -220,7 +239,7 @@ class PlannerService:
     def get_pending_steps(self, task_id: int) -> list[dict]:
         conn = get_connection()
         steps = conn.execute(
-            "SELECT id, task_id, step_number, title, description, tool_name, arguments, status, result FROM plan_steps WHERE task_id = ? AND status = 'pending' ORDER BY step_number ASC",
+            "SELECT id, task_id, step_number, title, description, tool_name, arguments, expected_result, verification_method, permission_level, timeout_seconds, retry_limit, depends_on, status, result FROM plan_steps WHERE task_id = ? AND status = 'pending' ORDER BY step_number ASC",
             (task_id,),
         ).fetchall()
         conn.close()
@@ -237,7 +256,7 @@ class PlannerService:
         )
         conn.commit()
         step = conn.execute(
-            "SELECT id, task_id, step_number, title, description, tool_name, arguments, status, result FROM plan_steps WHERE id = ?",
+            "SELECT id, task_id, step_number, title, description, tool_name, arguments, expected_result, verification_method, permission_level, timeout_seconds, retry_limit, depends_on, status, result FROM plan_steps WHERE id = ?",
             (step_id,),
         ).fetchone()
         conn.close()
@@ -248,6 +267,7 @@ class PlannerService:
         result = dict(step)
         if result["arguments"] is not None:
             result["arguments"] = json.loads(result["arguments"])
+        result["depends_on"] = json.loads(result["depends_on"] or "[]")
         return result
 
 

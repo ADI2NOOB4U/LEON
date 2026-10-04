@@ -33,14 +33,17 @@ def _install_client(monkeypatch, response=None, error=None):
     class DummyAsyncClient:
         def __init__(self, *args, **kwargs):
             captured.append({"client": kwargs})
+            self.closed = False
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc_value, traceback):
+            self.closed = True
             return False
 
         async def post(self, url, **kwargs):
+            assert not self.closed
             captured.append({"url": url, **kwargs})
             if error:
                 raise error

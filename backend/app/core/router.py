@@ -51,10 +51,12 @@ class MockProvider(ModelProvider):
 class ModelRouter:
     def __init__(self):
         configured_name = (settings.model_provider or "").strip().lower()
-        if settings.cloud_ai_enabled and configured_name in {"", "mock"}:
-            configured_name = (settings.cloud_ai_provider or "gemini").strip().lower()
+        # An explicit local/mock provider remains authoritative. Cloud
+        # routing is an opt-in fallback, never an implicit replacement for a
+        # local test or deployment mode.
         self.provider_name = self._normalize_provider_name(configured_name)
         self.provider = self._create_provider()
+        self._role_providers: dict[str, ModelProvider] = {}
 
     @staticmethod
     def _normalize_provider_name(name: str | None) -> str:
@@ -147,7 +149,16 @@ class ModelRouter:
             return self.provider
         if role == "general" or self.provider_name == "mock":
             return self.provider
-        return self._create_provider(role)
+        if role not in self._role_providers:
+            self._role_providers[role] = self._create_provider(role)
+        return self._role_providers[role]
+
+    async def close(self) -> None:
+        providers = [self.provider, *self._role_providers.values()]
+        for provider in providers:
+            close = getattr(provider, "close", None)
+            if close is not None:
+                await close()
 
     async def chat(
         self,

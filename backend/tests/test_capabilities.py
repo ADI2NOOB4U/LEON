@@ -14,7 +14,15 @@ def test_deterministic_capability_fast_paths():
     assert classify_command("what's playing?").action == "current"
     assert classify_command("read what's on my screen").capability == Capability.OCR
     assert classify_command("search the latest NVIDIA news").capability == Capability.RESEARCH
+    assert classify_command("what's the weather in London?").capability == Capability.WEATHER
+    assert classify_command("what's the weather?").capability == Capability.WEATHER
     assert classify_command("create a file called test.txt").requires_confirmation
+
+
+def test_datetime_and_system_state_detection_handle_multi_intent_questions():
+    assert classify_command("what is today's date").capability == Capability.DATETIME
+    assert classify_command("what are you doing").capability == Capability.SYSTEM_STATE
+    assert classify_command("what are you doing? what is today's date and time?").capability == Capability.DATETIME
 
 
 @pytest.mark.anyio

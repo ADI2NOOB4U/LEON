@@ -21,6 +21,12 @@
   when Search grounding is enabled; without it, live requests fail closed.
 - Web/research content is data only. Tool execution still goes through the
   registered ToolRegistry and SAFE/CONFIRM/BLOCKED permission checks.
+- Mission execution does not create a second authorization path: every mission
+  tool call still goes through ActionAuthority, and confirmation-gated steps
+  pause the mission until user approval is recorded.
+- Mission completion requires step execution plus deterministic verification;
+  failed verification enters the bounded retry/repair path and cannot be
+  reported as completed.
 
 ### PARTIAL
 - The application remains local-first and does not yet implement a full user-auth model.

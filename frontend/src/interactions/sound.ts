@@ -19,10 +19,17 @@ const sounds: Record<LeonSound, SoundShape> = {
 }
 
 const muteKey = 'leon-sound-muted'
+const volumeKey = 'leon-sound-volume'
 let muted = false
+let volume = 0.7
 if (typeof window !== 'undefined') {
   try {
     muted = window.localStorage.getItem(muteKey) === 'true'
+    const storedVolume = window.localStorage.getItem(volumeKey)
+    if (storedVolume !== null) {
+      const parsedVolume = Number(storedVolume)
+      if (Number.isFinite(parsedVolume)) volume = Math.min(1, Math.max(0, parsedVolume))
+    }
   } catch {
     muted = false
   }
@@ -32,6 +39,10 @@ let lastHoverAt = 0
 
 export function getMuted() {
   return muted
+}
+
+export function getVolume() {
+  return volume
 }
 
 export function setMuted(value: boolean) {
@@ -45,6 +56,17 @@ export function setMuted(value: boolean) {
   }
 }
 
+export function setVolume(value: number) {
+  volume = Math.min(1, Math.max(0, value))
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(volumeKey, String(volume))
+    } catch {
+      // Volume still applies for this session when storage is unavailable.
+    }
+  }
+}
+
 export function unlockSound() {
   if (muted || typeof window === 'undefined') return
   const AudioContextConstructor = window.AudioContext
@@ -54,7 +76,7 @@ export function unlockSound() {
 }
 
 export function playSound(sound: LeonSound) {
-  if (muted || !context || context.state !== 'running') return
+  if (muted || volume === 0 || !context || context.state !== 'running') return
   const now = context.currentTime
   if (sound === 'hover') {
     if (now - lastHoverAt < 0.42) return
@@ -68,7 +90,7 @@ export function playSound(sound: LeonSound) {
   oscillator.frequency.setValueAtTime(shape.frequency, now)
   oscillator.frequency.exponentialRampToValueAtTime(shape.endFrequency, now + shape.duration)
   gain.gain.setValueAtTime(0.0001, now)
-  gain.gain.exponentialRampToValueAtTime(shape.volume, now + Math.min(0.018, shape.duration / 3))
+  gain.gain.exponentialRampToValueAtTime(shape.volume * volume, now + Math.min(0.018, shape.duration / 3))
   gain.gain.exponentialRampToValueAtTime(0.0001, now + shape.duration)
   oscillator.connect(gain)
   gain.connect(context.destination)

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from backend.app.notifications.service import NotificationService
 from backend.app.security.permissions import PermissionManager
 from backend.app.tools.base import BaseTool
 from backend.app.tools.registry import ToolRegistry
+from backend.app.tools.system_tools import format_local_datetime
 
 
 @pytest.fixture(autouse=True)
@@ -55,29 +57,23 @@ def test_command_task_runs_plan_steps_verifies_and_notifies(monkeypatch):
     assert notifications.notifications
 
 
-def test_command_current_datetime_persists_and_executes_tool_plan():
+def test_command_current_datetime_returns_verified_local_datetime():
+    earliest = datetime.now().astimezone()
     response = TestClient(app).post(
         "/api/command",
         json={"message": "Leon, tell me the current date and time"},
     )
+    latest = datetime.now().astimezone()
     assert response.status_code == 200
-    task_id = response.json()["task"]["id"]
-
-    plan = planner_service.get_plan(task_id)
-    assert plan is not None
-    assert [(step["tool_name"], step["arguments"]) for step in plan["steps"]] == [
-        ("get_datetime", {})
-    ]
-
-    LeonWorker()._execute(get_task(task_id))
-
-    task = get_task(task_id)
-    step = planner_service.get_plan(task_id)["steps"][0]
-    actual_result = json.loads(step["result"])
-    assert step["status"] == "completed"
+    payload = response.json()
+    assert payload["type"] == "action"
+    assert payload["capability"] == "DATETIME"
+    assert payload["verified"] is True
+    actual_result = payload["result"]
     assert actual_result["tool"] == "get_datetime"
-    assert actual_result["datetime"] in task["result"]
-    assert task["result"] != "Task 'Leon, tell me the current date and time' completed successfully (1 step)."
+    actual_datetime = datetime.fromisoformat(actual_result["datetime"])
+    assert earliest <= actual_datetime <= latest
+    assert payload["message"] == format_local_datetime(actual_result)
 
 
 def test_restart_requeues_running_work_without_rerunning_completed_steps():

@@ -1,4 +1,5 @@
 import base64
+import asyncio
 from typing import Any
 
 import httpx
@@ -12,20 +13,34 @@ class OpenAICompatibleProvider(ModelProvider):
     def __init__(self, base_url: str, model: str):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            async with self._client_lock:
+                if self._client is None:
+                    self._client = httpx.AsyncClient(timeout=settings.request_timeout)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         if not self.model:
             raise RuntimeError("No model configured for this provider.")
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    **kwargs,
-                },
-            )
+        client = await self._get_client()
+        response = await client.post(
+            f"{self.base_url}/chat/completions",
+            json={
+                "model": self.model,
+                "messages": messages,
+                "temperature": 0.7,
+                **kwargs,
+            },
+        )
         response.raise_for_status()
         data: dict[str, Any] = response.json()
         try:
@@ -41,8 +56,8 @@ class OpenAICompatibleProvider(ModelProvider):
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}},
         ]}], "temperature": 0.2}
-        async with httpx.AsyncClient(timeout=settings.vision_timeout_seconds) as client:
-            response = await client.post(f"{self.base_url}/chat/completions", json=payload)
+        client = await self._get_client()
+        response = await client.post(f"{self.base_url}/chat/completions", json=payload)
         response.raise_for_status()
         data: dict[str, Any] = response.json()
         try:
@@ -56,8 +71,8 @@ class OpenAICompatibleProvider(ModelProvider):
     async def embed(self, text: str) -> list[float]:
         if not self.model:
             raise RuntimeError("No model configured for this provider.")
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
-            response = await client.post(f"{self.base_url}/embeddings", json={"model": self.model, "input": text})
+        client = await self._get_client()
+        response = await client.post(f"{self.base_url}/embeddings", json={"model": self.model, "input": text})
         response.raise_for_status()
         data: dict[str, Any] = response.json()
         try:
@@ -98,7 +113,11 @@ class GeminiProvider(ModelProvider):
         payload = self._payload(user_input, grounding=bool(kwargs.get("grounding")))
         async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
             url = f"{self.base_url}/interactions"
-        response = await client.post(url, headers=self._request_headers(), json=payload)
+            response = await client.post(
+                url,
+                headers=self._request_headers(),
+                json=payload,
+            )
         response.raise_for_status()
         data: dict[str, Any] = response.json()
         if not isinstance(data, dict):

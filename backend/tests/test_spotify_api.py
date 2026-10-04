@@ -1,9 +1,12 @@
 import asyncio
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from fastapi import HTTPException
 from pydantic import SecretStr
 
+from backend.app.api import media as media_api
 from backend.app.config.settings import Settings, settings
 from backend.app.tools import media_tools
 from backend.app.tools.media_tools import SpotifyError, SpotifyProvider, SpotifyOAuth
@@ -30,6 +33,41 @@ def test_spotify_missing_token_is_explicit(tmp_path, monkeypatch):
     assert result["error_code"] == "SPOTIFY_TOKEN_MISSING"
 
 
+def test_spotify_authorization_url_trims_client_id(monkeypatch):
+    monkeypatch.setattr(settings, "spotify_client_id", " client-id \n")
+    oauth = SpotifyOAuth()
+    params = parse_qs(urlsplit(oauth.authorization_url()).query)
+    assert params["client_id"] == ["client-id"]
+    assert params["redirect_uri"] == [settings.spotify_redirect_uri]
+
+
+def test_missing_web_playback_scope_is_reported():
+    old_scopes = "streaming user-read-private user-read-playback-state user-modify-playback-state"
+    assert SpotifyOAuth.missing_scopes({"scope": old_scopes}) == ["user-read-email"]
+
+
+def test_spotify_token_endpoint_rejects_under_scoped_token(monkeypatch):
+    class UnderScopedOAuth:
+        configured = True
+
+        async def access_token(self):
+            return "opaque-access-token"
+
+        def _read(self):
+            return {"scope": "streaming user-read-private"}
+
+        @staticmethod
+        def missing_scopes(_token):
+            return ["user-read-email", "user-read-playback-state", "user-modify-playback-state"]
+
+    monkeypatch.setattr(media_api, "spotify_oauth", UnderScopedOAuth())
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(media_api.spotify_token())
+
+    assert error.value.status_code == 403
+    assert error.value.detail["code"] == "SPOTIFY_SCOPE_REQUIRED"
+
+
 def test_spotify_token_write_loads_across_instances(tmp_path, monkeypatch):
     path = Path(tmp_path) / "nested" / "tokens.json"
     monkeypatch.setattr(settings, "spotify_token_path", path)
@@ -40,8 +78,8 @@ def test_spotify_token_write_loads_across_instances(tmp_path, monkeypatch):
 
 
 def test_spotify_callback_persists_exchanged_token(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "spotify_client_id", "client")
-    monkeypatch.setattr(settings, "spotify_client_secret", SecretStr("secret"))
+    monkeypatch.setattr(settings, "spotify_client_id", " client ")
+    monkeypatch.setattr(settings, "spotify_client_secret", SecretStr(" secret "))
     monkeypatch.setattr(settings, "spotify_token_path", Path(tmp_path) / "tokens.json")
 
     class Response:
@@ -59,12 +97,13 @@ def test_spotify_callback_persists_exchanged_token(tmp_path, monkeypatch):
             return None
 
         async def post(self, *args, **kwargs):
+            assert kwargs["auth"] == ("client", "secret")
             return Response()
 
     monkeypatch.setattr(media_tools.httpx, "AsyncClient", lambda **kwargs: Client())
     oauth = SpotifyOAuth()
     url = oauth.authorization_url()
-    state = url.split("state=", 1)[1]
+    state = parse_qs(urlsplit(url).query)["state"][0]
     asyncio.run(oauth.callback("code", state))
     saved = SpotifyOAuth()._read()
     assert saved["access_token"] == "access"
@@ -104,7 +143,9 @@ def test_spotify_http_statuses_are_classified(monkeypatch):
         def __init__(self, response): self.response = response
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
-        async def request(self, *args, **kwargs): return self.response
+        async def request(self, *args, **kwargs):
+            assert kwargs["headers"]["Authorization"] == "Bearer secret"
+            return self.response
 
     for status, code in [(401, "SPOTIFY_AUTH_REQUIRED"), (403, "SPOTIFY_PLAYBACK_FORBIDDEN"), (429, "SPOTIFY_RATE_LIMITED")]:
         monkeypatch.setattr(media_tools.httpx, "AsyncClient", lambda **kwargs: Client(Response(status)))

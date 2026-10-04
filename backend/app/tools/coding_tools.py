@@ -89,10 +89,14 @@ class CodingExecutorTool(BaseTool):
 
         workspace = self._resolve_workspace(workspace_path)
         changes = self._validate_files(files)
+        workspace_file_tools = {
+            "create": CreateFileTool((workspace,)),
+            "edit": EditFileTool((workspace,)),
+        }
         file_results = []
         for change in changes:
             file_results.append(
-                await self._file_tools[change["action"]].execute(
+                await workspace_file_tools[change["action"]].execute(
                     path=change["path"], content=change["content"]
                 )
             )

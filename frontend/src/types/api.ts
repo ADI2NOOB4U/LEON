@@ -28,6 +28,11 @@ export interface Task {
   last_activity?: string | null
   summary?: string | null
   artifacts?: TaskArtifact[]
+  task_type?: 'standard' | 'research' | 'mission' | string
+  verification_status?: string
+  checkpoint?: string | null
+  waiting_reason?: string | null
+  approval_granted?: number
 }
 
 export interface TaskArtifact {
@@ -40,13 +45,15 @@ export interface TaskArtifact {
 }
 
 export type CommandResponse = {
-  type: 'task' | 'chat' | 'action' | 'failed' | 'confirmation_required'
+  type: 'task' | 'mission' | 'chat' | 'action' | 'failed' | 'clarification' | 'confirmation_required'
   message: string
   task?: Task
+  mission?: Task
   capability?: string
   action?: string
   result?: Record<string, unknown>
   verified?: boolean
+  confirmation_id?: string
 }
 
 export interface MediaStatus {
@@ -55,6 +62,13 @@ export interface MediaStatus {
   provider?: string
   title?: string | null
   artist?: string | null
+  album?: string | null
+  album_art_url?: string | null
+  progress_ms?: number | null
+  duration_ms?: number | null
+  is_playing?: boolean
+  device?: string | null
+  device_id?: string | null
   message?: string
 }
 
@@ -62,10 +76,27 @@ export interface SpotifyStatus {
   configured: boolean
   authenticated: boolean
   requires_auth: boolean
+  premium_available?: boolean | null
+  sdk_loaded?: boolean
+  sdk_connected?: boolean
+  sdk_ready?: boolean
+  playback_available?: boolean
+  device_id?: string | null
+  device_name?: string | null
+  current_device_id?: string | null
+  current_device_name?: string | null
+  is_playing?: boolean
+  current_track?: string | null
+  current_artist?: string | null
+  current_album?: string | null
+  album_art_url?: string | null
+  progress_ms?: number | null
+  remote_devices?: Array<{ id: string; name: string; type?: string; is_active?: boolean }>
+  error_code?: string
+  missing_scopes?: string[]
   devices_available?: number
   account_name?: string | null
   device_available?: boolean
-  device_name?: string | null
 }
 
 export type VoiceState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error'
@@ -103,6 +134,66 @@ export interface Memory {
   importance: number
   created_at: string
   updated_at: string
+}
+
+export interface PersonalProfile {
+  preferred_name: string | null
+  date_of_birth: string | null
+  birth_time?: string | null
+  birth_place?: string | null
+  location: string | null
+  timezone: string | null
+  languages: string[]
+  education: Record<string, unknown>
+  work?: Record<string, unknown>
+  career: Record<string, unknown>
+  skills: string[]
+  interests: string[]
+  preferences: Record<string, unknown>
+  communication_style: Record<string, unknown>
+  projects: Array<Record<string, unknown>>
+  goals: Array<Record<string, unknown>>
+  astrology_profile: Record<string, unknown>
+}
+
+export interface PersonalMemory {
+  id: number
+  memory_type: string
+  category: string
+  key: string
+  value: unknown
+  source: string
+  confidence: string
+  privacy_level: string
+  retention: string
+  created_at: string
+  updated_at: string
+  active: boolean
+}
+
+export interface Relationship {
+  id: number
+  person_id: string
+  name: string
+  relationship_type: string
+  important_dates: Record<string, unknown>
+  notes?: string | null
+  confidence: string
+  privacy_level: string
+  active: boolean
+}
+
+export interface ImportantDate {
+  id: number
+  name: string
+  date_value: string
+  time_value?: string | null
+  date_type: string
+  person_id?: string | null
+  notes?: string | null
+  confidence: string
+  privacy_level: string
+  active: boolean
 }
 
 export interface NewsSource {
@@ -147,4 +238,124 @@ export interface NewsEvent {
   alerted: boolean | number
   sources: NewsSource[]
   briefing?: NewsBriefing
+}
+
+export type ComputerState =
+  | 'IDLE'
+  | 'OBSERVING'
+  | 'PLANNING'
+  | 'AWAITING_CONFIRMATION'
+  | 'ACTING'
+  | 'VERIFYING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export interface TargetLocation {
+  x: number
+  y: number
+}
+
+export interface TargetBounds {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export interface VisualTarget {
+  id: string
+  label: string
+  type: string
+  location: TargetLocation
+  bounds?: TargetBounds | null
+  confidence: number
+  freshness_timestamp: string
+  app_context?: string | null
+  raw_text?: string | null
+}
+
+export interface ScreenInfo {
+  width: number
+  height: number
+  scale_factor: number
+  is_captured: boolean
+}
+
+export interface ComputerObservation {
+  id: string
+  timestamp: string
+  screen: ScreenInfo
+  active_application?: string | null
+  active_window?: string | null
+  visible_text?: string | null
+  screenshot_available: boolean
+  running_applications: string[]
+  detected_targets: VisualTarget[]
+  diagnostics: string[]
+  error_summary?: string | null
+}
+
+export interface ComputerStatus {
+  state: ComputerState
+  active_application?: string | null
+  active_window?: string | null
+  running_applications: string[]
+}
+
+export interface ComputerAction {
+  action_type: string
+  app_name?: string | null
+  target_id?: string | null
+  target_label?: string | null
+  coordinates?: TargetLocation | null
+  text?: string | null
+  hotkeys?: string[] | null
+  scroll_direction?: string | null
+  url?: string | null
+  path?: string | null
+  observation_id?: string | null
+  confirmed?: boolean
+  risk?: string
+}
+
+export interface ExecutionMetrics {
+  observation_ms: number
+  vision_ms: number
+  action_ms: number
+  verification_ms: number
+  total_ms: number
+}
+
+export interface VerificationResult {
+  verified: boolean
+  code: string
+  reason: string
+  state_changes: Record<string, unknown>
+}
+
+export interface ExecutionResult {
+  success: boolean
+  state: ComputerState
+  action?: ComputerAction | null
+  observation_before?: ComputerObservation | null
+  observation_after?: ComputerObservation | null
+  verification?: VerificationResult | null
+  message: string
+  error?: string | null
+  metrics: ExecutionMetrics
+}
+
+export interface DiagnosisResponse {
+  observation_id: string
+  timestamp: string
+  active_application?: string | null
+  active_window?: string | null
+  screenshot_available: boolean
+  visible_summary?: string | null
+  error_detected: boolean
+  error_summary?: string | null
+  targets_count: number
+  diagnostics: string[]
+  latency_ms: number
 }

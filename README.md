@@ -1,124 +1,206 @@
-﻿# LEON
+<div align="center">
 
-LEON is a local-first personal AI system with a modular backend, persistent memory, task orchestration, and a premium desktop-style frontend foundation.
+# LEON
 
-## Current status
+### A local-first AI workspace for thinking, building, and getting things done.
 
-### DONE
-- FastAPI backend foundation is in place and serving core API routes.
-- SQLite persistence for tasks and memory is working.
-- Background task lifecycle and retry/cancel flow are implemented.
-- Tool registry and permission checks are in place for safe system tools.
-- Planner and memory APIs are functional.
-- Backend test suite is passing in the current repo state.
-- Frontend shell, motion styling, and 3D core visual foundation are implemented.
-- Frontend build and typecheck pass in this workspace.
+<p>
+  <a href="https://github.com/ADI2NOOB4U/LEON/actions"><img src="https://img.shields.io/github/actions/workflow/status/ADI2NOOB4U/LEON/ci.yml?style=flat-square&label=CI" alt="CI status"></a>
+  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/React-TypeScript-61DAFB?style=flat-square&logo=react&logoColor=111827" alt="React and TypeScript">
+  <img src="https://img.shields.io/badge/Privacy-local--first-8B5CF6?style=flat-square" alt="Local first">
+</p>
 
-### PARTIAL
-- Model routing supports role-specific local Ollama models and optional Gemini. Provider failures are surfaced; only safe public general chat may automatically fall back to Gemini when cloud AI is enabled.
-- Frontend is connected to real backend endpoints for health and task creation, but not yet to all advanced features or memory/tool UIs.
-- The task system is operational as a background job loop, but it is still modular and deterministic rather than autonomous AI execution.
-- Visual frontend direction is defined, but the product remains a foundational shell rather than the final full product experience.
+<p><strong>Memory</strong> · <strong>Vision</strong> · <strong>Voice</strong> · <strong>Tasks</strong> · <strong>Tools</strong> · <strong>Orchestration</strong></p>
 
-### NEWS & PERSONAL BRIEFINGS
-- News subscriptions support the built-in cybersecurity, AI, technology, and India topics plus validated custom topics.
-- Collection uses LEON's read-only Playwright search tool and allowlisted configured sources; URLs are validated, deduplicated, and stored with retrieval metadata.
-- Stories receive explainable critical, important, interesting, or ignore classifications and are compared against bounded, topic-relevant LEON memory.
-- Briefings preserve facts, source URLs, and LEON interpretation separately, with persisted history and included source records.
-- Morning, evening, and timezone-qualified custom schedules are durable SQLite jobs. Interrupted jobs recover on restart and duplicate active jobs are not created.
-- Desktop/push notification interface and configured email delivery are supported. Delivery failures are recorded without losing the briefing.
-- Configure provider behavior through the existing `notification_provider`, `email_provider`, and email recipient settings. News does not post to external services.
+</div>
 
-### NOT STARTED
-- Browser automation, desktop control, email, phone integration, and cross-device sync.
-- Full autonomous planning/execution beyond current modular task flow.
-- Vector or semantic memory.
-- Remote push provider implementations beyond the existing provider interface.
-- RSS/API source adapters and richer published-time extraction (the current collector intentionally stays within the existing browser/search infrastructure).
-- Cross-provider fallback beyond the explicitly limited safe public chat case.
+LEON is a personal AI operating layer built around one principle: use the smallest, safest capability that can complete the request. Deterministic requests go directly to local tools; model calls happen when they add real value; private data stays local by default.
 
-### BLOCKED
-- Ollama-backed requests require a running Ollama service and the configured local model.
-- Gemini live research and cloud fallback require explicit cloud opt-in and a backend-only Gemini API key.
-- Full AI/autonomous execution beyond the current task engine remains intentionally out of scope for the current milestone.
+## Why LEON
 
-## Run locally
+Most assistants turn every message into a large-model conversation. LEON takes a different path:
 
-Backend:
-- python -m pip install -r backend/requirements.txt
-- python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```text
+message → Intelligence Core → intent → capability → permission
+        → executor → verification → clear, honest response
+```
 
-Frontend:
-- cd frontend
-- npm install
-- npm run dev
+That makes the system faster, easier to extend, more private, and much less likely to claim an action happened when it did not.
 
-## Local voice
+## What is inside
 
-Voice conversations run locally. Install `backend/requirements.txt`, then place a
-CTranslate2 faster-whisper model directory at `data/models/faster-whisper-small`
-and a Piper voice plus its matching `.onnx.json` file at
-`data/models/piper/en_US-lessac-medium.onnx`. Model files are not downloaded by
-the server; both paths can be overridden with `VOICE_STT_MODEL_PATH` and
-`VOICE_TTS_MODEL_PATH`. If the standard Piper path is absent, the matching
-default voice and config at the repository root are also recognized. The
-default faster-whisper configuration uses CPU int8 and loads models lazily, so
-missing models produce an actionable API error.
+| Layer | What it does |
+| --- | --- |
+| **Intelligence Core** | Deterministic-first routing, route scoring, provider selection, privacy classification, fallbacks, and telemetry. |
+| **Local models** | Ollama roles for general chat, coding, vision, and embeddings. |
+| **Action boundary** | `ActionAuthority` enforces SAFE / CONFIRM / BLOCKED permissions before tools run. |
+| **Workspace** | Persistent memory, background tasks, planner/worker execution, schedules, notifications, and research. |
+| **Perception** | Snapshot-based local vision, OCR, screen analysis, speech-to-text, and text-to-speech. |
+| **Integrations** | Spotify/media, browser, filesystem, Git, desktop applications, email, and optional Gemini research. |
 
-Open the frontend on localhost and allow microphone access. Select **Start
-listening**, speak, then select **Stop listening** to send the recording to
-LEON. Voice uses the existing chat agent and does not include wake-word
-detection. Piper remains the local default; Fish Audio is optional.
+## Intelligence Core
 
-To use Fish Audio for speech output, set `VOICE_PROVIDER=fish_audio` and
-`FISH_AUDIO_API_KEY` in the backend environment. Optionally set
-`FISH_AUDIO_REFERENCE_ID` to a Fish Audio voice model ID and
-`FISH_AUDIO_MODEL` to select a model (defaults to `s2.1-pro-free`). The key
-stays on the backend. Fish Audio failures fall back to the configured local
-Piper voice; if both providers fail, the transcript and text reply are still
-returned.
+The core is exposed for safe route inspection during development:
 
-## Gemini cloud routing
+```http
+POST /api/intelligence/route
+Content-Type: application/json
 
-Gemini is an optional backend provider. Copy the settings from
-`backend/.env.example` into `backend/.env`, set `CLOUD_AI_ENABLED=true`, and
-provide `GEMINI_API_KEY` there. The API key must remain in the backend
-environment; do not add it to frontend environment variables or return it in
-API responses. Google Search grounding is controlled by
-`CLOUD_AI_SEARCH_GROUNDING` and defaults to enabled.
+{"message":"what time is it?"}
+```
 
-Normal, coding, and image requests prefer local Ollama models
-(`qwen3:8b`, `qwen2.5-coder:7b`, and `qwen3-vl:8b`). Requests asking for current,
-latest, or today's information route to Gemini live research and require Search
-grounding. A direct request to use Gemini selects Gemini. If Ollama fails,
-only a safe public general-chat request may be retried with Gemini, and only
-when cloud AI is enabled. Sensitive/private prompts are never automatically
-uploaded. Cloud requests contain only the latest direct user text; they omit
-memory, prior conversation turns, system context, local files, images, and
-recordings. Gemini Interactions are sent with `store=false`.
+Example response:
 
-Gemini calls use Google's Interactions API and its `google_search` tool
-(`https://ai.google.dev/gemini-api/docs/interactions` and
-`https://ai.google.dev/gemini-api/docs/google-search`). Disabling Search
-grounding makes current/latest requests fail explicitly rather than returning
-an ungrounded answer as if it were live research. Provider failures are
-reported rather than silently replaced with mock output.
+```json
+{
+  "intent": "datetime.current",
+  "confidence": 0.91,
+  "route": "system.datetime",
+  "provider": "local",
+  "needs_web": false,
+  "needs_vision": false,
+  "needs_memory": false,
+  "requires_confirmation": false
+}
+```
 
-## Validation
+The diagnostic endpoint never executes an action. Real execution continues through the existing permission and verification boundaries.
 
-Current verified status in this workspace:
-- Backend tests: 201 passed, including voice and vision tests.
-- Frontend typecheck/build: passed (`frontend/npm run typecheck` and `frontend/npm run build`).
-- Real local Ollama chat smoke: passed.
-- Live Gemini/Google Search smoke: unavailable because cloud AI is disabled and no Gemini API key is configured in this environment.
-- `git diff --check`: passed (Git reports only existing line-ending normalization notices)
+## Supported routes
 
-## Notes
+| Request | Route |
+| --- | --- |
+| `hello` | Local general conversation |
+| `what time is it?` | Operating-system clock |
+| `what is my CPU usage?` | Local system statistics |
+| `write a Python function...` | Local coding model |
+| `what's on my screen?` | Screen capture + local vision |
+| `remember that...` | Persistent memory |
+| `play ... on Spotify` | Spotify playback + playback verification |
+| `play ... on YouTube Music` | Opens a YouTube Music search in the default browser |
+| `open VS Code` | Desktop tool + confirmation |
+| `latest AI news` | Current-information research route |
+| `create a project, run tests, fix failures` | Planner and background task system |
 
-This repository is intentionally stabilized around the current milestone rather than claiming future AI features are complete. The goal is a maintainable foundation for the next implementation phase.
+## Quick start
 
-## Vision V1
+### Backend
 
-Vision is a snapshot-first, local-only perception path. The frontend requests the camera only after the user activates Vision, captures one frame (or accepts a PNG/JPEG/WebP upload), and sends it to `POST /api/vision/analyze`. The backend validates and decodes the image, then uses the shared Ollama provider with `VISION_MODEL` (default `qwen3-vl:8b`). Frames are not persisted, added to memory, sent to web search, or sent to Fish Audio. Text visible in images is treated as untrusted data and cannot authorize tools or actions.
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r backend/requirements.txt
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
 
-Configure `VISION_ENABLED`, `VISION_MODEL`, `VISION_MAX_IMAGE_MB`, `VISION_MAX_WIDTH`, `VISION_MAX_HEIGHT`, and `VISION_TIMEOUT_SECONDS` through the existing backend settings. Install the configured model with Ollama before use. V1 supports general, OCR, screen, document, and object modes; it does not continuously monitor a camera or desktop.
+### Frontend
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+### Spotify
+
+Spotify playback needs a Spotify Developer app. Add its client ID and client secret to the backend environment as `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`, then register the exact URL in `SPOTIFY_REDIRECT_URI` (by default, `http://127.0.0.1:8000/api/media/spotify/callback`) in that app's redirect URI settings. Restart the backend after changing the environment. The client secret and OAuth tokens must remain backend-only.
+
+Once configured, authorize Spotify from the Media panel, then use typed or voice commands such as `play I Can't Let You Go by K3NT4 on Spotify`, `pause Spotify`, or `what's playing on Spotify?`. Explicit voice requests run without a second confirmation; typed playback changes still ask for confirmation. Playback is confirmed against Spotify's current device state; LEON reports a failure when no device, Premium permission, or track is available.
+
+YouTube Music voice commands such as `play Here Comes the Sun by The Beatles on YouTube Music` open a search in the default browser. Select a result there to begin playback; browser autoplay is not bypassed. Pause/next/previous voice controls are available when Windows media controls are enabled (`WINDOWS_MEDIA_ENABLED=true`) and YouTube Music has an active browser media session.
+
+### Gmail
+
+LEON can send plain-text Gmail messages through the Gmail API. Enable the Gmail API in Google Cloud, create an OAuth client, obtain a refresh token with Gmail send permission, and set `EMAIL_PROVIDER=gmail`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, and `GMAIL_SENDER` in `backend/.env`. Never put these values in the frontend or commit them. Install dependencies with `python -m pip install -r backend/requirements.txt` and restart the backend.
+
+Use the command bar or voice with the explicit form `send an email to person@example.com subject Meeting body The meeting is at 10 AM.` LEON previews the recipient and subject and requires confirmation before sending. Readiness is available at `/api/email/status`; account creation and password-based Gmail automation are intentionally unsupported.
+
+### Optional local models
+
+```text
+qwen3:8b                 general chat
+qwen2.5-coder:7b        coding
+qwen3-vl:8b             vision
+qwen3-embedding:0.6b   local memory embeddings
+```
+
+Configure the backend through [`backend/.env.example`](backend/.env.example). Keep API keys, OAuth tokens, and secrets in the backend environment only.
+
+## Voice and vision
+
+Voice follows the same core as typed requests:
+
+```text
+microphone → STT → Intelligence Core → executor → response → TTS
+```
+
+Vision is snapshot-first and local-only by default. Frames are not persisted, added to memory, or sent to web search. See the environment example for model paths and size limits.
+
+## Development
+
+Run the full validation suite from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend/tests -q
+cd frontend
+npm run typecheck
+npm run build
+```
+
+Current workspace validation: **262 backend tests passing**, frontend typecheck passing, and frontend production build passing.
+
+## Controlled self-improvement
+
+LEON can learn response-quality preferences from explicit user feedback. The learning cycle requires repeated low-rated outcomes, creates a versioned proposal, applies a safety gate, and supports rollback. It only updates response guidance; it cannot change permissions, tools, action authority, or security policy.
+
+The API is available under `/api/improvement`:
+
+- `POST /feedback` records a 1–5 rating and verified outcome.
+- `POST /learn` evaluates repeated negative evidence and activates safe guidance.
+- `GET /profile` and `GET /proposals` expose the current learning state.
+- `POST /proposals/{id}/rollback` reverts an active proposal.
+
+## Project map
+
+```text
+backend/app/
+├── intelligence/   routing brain, schemas, registry, metrics, verification
+├── core/           agent, providers, planner, authority, research
+├── tools/          safe executors and capability integrations
+├── memory/         persistent local memory
+├── jobs/           worker and scheduler
+├── voice/          STT/TTS pipeline
+└── vision/         image and screen analysis
+
+frontend/src/
+├── components/     workspace panels and the LEON core visual
+├── api/             typed backend client
+├── interactions/   sound and cursor interaction layer
+└── styles.css      visual system and responsive layout
+```
+
+## Design commitments
+
+- **Local first:** private workspace data and local files stay local by default.
+- **Deterministic first:** clocks, system stats, media controls, and obvious tools do not need an LLM.
+- **Permission aware:** confidence never silently grants action authority.
+- **Verified execution:** a successful command response is not treated as proof until the result is checked.
+- **Honest fallbacks:** unavailable providers produce explicit failures, never fabricated success.
+- **Small, composable architecture:** specialized executors remain useful while the Intelligence Core provides one routing brain.
+
+## Status
+
+LEON is an actively developed local AI workspace. The core platform, API surface, frontend shell, memory, vision, voice, task system, and deterministic orchestration are implemented. Optional capabilities such as Spotify, Gemini research, Ollama models, and native media discovery depend on local configuration and provider availability.
+
+## Government and business readiness
+
+For a department-facing product brief, pilot plan, procurement model, and production acceptance criteria, see [`docs/GOVERNMENT_BUSINESS_PROPOSAL.md`](docs/GOVERNMENT_BUSINESS_PROPOSAL.md). A shorter product overview is available in [`docs/PRODUCT_BRIEF.md`](docs/PRODUCT_BRIEF.md).
+
+For the complete reviewer path, start at [`docs/README.md`](docs/README.md). It links the architecture, security posture, deployment model, commercial packaging, and production-readiness checklist.
+
+## License
+
+No license has been declared yet. Until one is added, all rights are reserved.

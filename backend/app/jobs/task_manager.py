@@ -7,8 +7,8 @@ from backend.app.security.web_security import redact_task_text
 def create_task(title: str, max_retries: int = 2, task_type: str = "standard",
                 research_source_count: int = 5, notify_on_completion: bool = True,
                 priority: str = "normal") -> int:
-    if task_type not in {"standard", "research"}:
-        raise ValueError("task_type must be 'standard' or 'research'")
+    if task_type not in {"standard", "research", "mission"}:
+        raise ValueError("task_type must be 'standard', 'research', or 'mission'")
     if not isinstance(research_source_count, int) or not 1 <= research_source_count <= 20:
         raise ValueError("research_source_count must be between 1 and 20")
     if priority not in {"high", "normal", "low"}:
@@ -16,9 +16,10 @@ def create_task(title: str, max_retries: int = 2, task_type: str = "standard",
     timestamp = now()
     conn = get_connection()
     columns = ["title", "task_type", "research_source_count", "notify_on_completion", "status",
-               "created_at", "updated_at", "last_activity", "progress", "current_stage", "max_retries", "priority"]
+               "created_at", "updated_at", "last_activity", "progress", "current_stage", "max_retries", "priority",
+               "verification_status"]
     values = [title, task_type, research_source_count, int(notify_on_completion), 'queued',
-              timestamp, timestamp, timestamp, 0, 'queued', max_retries, priority]
+              timestamp, timestamp, timestamp, 0, 'queued', max_retries, priority, 'pending']
     cursor = conn.execute(
         f"""INSERT INTO tasks
         ({', '.join(columns)})
@@ -44,6 +45,10 @@ def get_task(task_id: int):
     task = dict(row)
     task.setdefault("priority", "normal")
     task.setdefault("wait_for_user_reason", None)
+    task.setdefault("checkpoint", None)
+    task.setdefault("context", None)
+    task.setdefault("verification_status", "pending")
+    task.setdefault("waiting_reason", None)
     task["artifacts"] = get_task_artifacts(task_id)
     return task
 
@@ -92,7 +97,7 @@ def recover_interrupted_tasks() -> int:
 
 
 def update_task(task_id: int, **fields) -> None:
-    allowed = {"status", "started_at", "completed_at", "updated_at", "result", "summary", "error", "progress", "current_stage", "retry_count", "cancel_requested", "last_activity", "priority", "wait_for_user_reason"}
+    allowed = {"status", "started_at", "completed_at", "updated_at", "result", "summary", "error", "progress", "current_stage", "retry_count", "cancel_requested", "last_activity", "priority", "wait_for_user_reason", "checkpoint", "context", "verification_status", "waiting_reason", "approval_granted"}
     fields = {key: value for key, value in fields.items() if key in allowed}
     if not fields: return
     timestamp = now(); fields["updated_at"] = timestamp; fields.setdefault("last_activity", timestamp)
@@ -128,7 +133,7 @@ def pause_task(task_id: int, reason: str | None = None) -> bool:
 
 def resume_task(task_id: int) -> bool:
     task = get_task(task_id)
-    if not task or task["status"] not in {"paused", "waiting_for_user"}:
+    if not task or task["status"] not in {"paused", "waiting_for_user", "awaiting_user"}:
         return False
     update_task(task_id, status="queued", current_stage="queued", wait_for_user_reason=None)
     log_event(task_id, "resumed", "Task resumed from a paused checkpoint.")
@@ -141,4 +146,16 @@ def wait_for_user(task_id: int, reason: str) -> bool:
         return False
     update_task(task_id, status="waiting_for_user", current_stage="waiting_for_user", wait_for_user_reason=reason)
     log_event(task_id, "waiting_for_user", reason)
+    return True
+
+
+def retry_task(task_id: int) -> bool:
+    task = get_task(task_id)
+    if not task or task["status"] not in {"failed", "cancelled"}:
+        return False
+    update_task(
+        task_id, status="queued", current_stage="retrying", cancel_requested=0,
+        retry_count=0, error=None, completed_at=None, verification_status="pending",
+    )
+    log_event(task_id, "retry_requested", "Retry requested by user.")
     return True

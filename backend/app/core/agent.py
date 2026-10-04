@@ -1,7 +1,11 @@
 ﻿from backend.app.core.capabilities import is_datetime_request
 from backend.app.core.router import ModelRouter, final_model_response
 from backend.app.memory.memory import memory_service
+from backend.app.memory.profile import personal_memory_service
 from backend.app.tools.system_tools import GetDatetimeTool, format_local_datetime
+from backend.app.tools.weather import current_weather_reply
+from backend.app.intelligence import intelligence_core
+from backend.app.improvement import improvement_service
 
 
 SYSTEM_PROMPT = """
@@ -23,20 +27,38 @@ class LeonAgent:
     def __init__(self):
         self.router = ModelRouter()
 
+    async def close(self) -> None:
+        await self.router.close()
+
     async def _local_datetime_reply(self, user_message: str) -> str | None:
-        if not is_datetime_request(user_message):
+        if intelligence_core.route(user_message).route != "system.datetime":
             return None
         payload = await GetDatetimeTool().execute()
         return format_local_datetime(payload)
 
+    async def _weather_reply(self, user_message: str) -> str | None:
+        return await current_weather_reply(user_message)
+
     async def chat(self, user_message: str) -> str:
+        memory_command = personal_memory_service.handle_command(user_message)
+        if memory_command is not None:
+            return memory_command
+        decision = intelligence_core.route(user_message)
+        weather_reply = await self._weather_reply(user_message)
+        if weather_reply is not None:
+            return weather_reply
         datetime_reply = await self._local_datetime_reply(user_message)
         if datetime_reply is not None:
             return datetime_reply
-        route_for_text = getattr(self.router, "route_for_text", None)
-        role = route_for_text(user_message) if route_for_text else "general"
+        role = decision.model_role or "general"
         system_prompt = SYSTEM_PROMPT.strip()
+        learned = improvement_service.profile().get("profile", {}).get("response_guidance")
+        if learned:
+            system_prompt += "\n\nLearned response guidance (do not override safety or permissions):\n" + str(learned)
         memory_context = memory_service.context_for(user_message)
+        personal_context = personal_memory_service.context_for(user_message)
+        if personal_context:
+            memory_context = "\n".join(filter(None, [memory_context, personal_context]))
         if memory_context and role not in {"gemini", "research"}:
             system_prompt += (
                 "\n\nRelevant remembered context (use only when relevant; do not "
@@ -64,11 +86,16 @@ class LeonAgent:
 
     async def chat_fast(self, user_message: str) -> str:
         """Low-overhead local conversation path used by voice turns."""
+        memory_command = personal_memory_service.handle_command(user_message)
+        if memory_command is not None:
+            return memory_command
+        weather_reply = await self._weather_reply(user_message)
+        if weather_reply is not None:
+            return weather_reply
         datetime_reply = await self._local_datetime_reply(user_message)
         if datetime_reply is not None:
             return datetime_reply
-        route_for_text = getattr(self.router, "route_for_text", None)
-        role = route_for_text(user_message) if route_for_text else "general"
+        role = intelligence_core.route(user_message).model_role or "general"
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT.strip()},
             {"role": "user", "content": user_message},

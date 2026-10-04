@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import threading
 import time
@@ -22,6 +22,10 @@ from backend.app.notifications.service import NotificationService, notification_
 from backend.app.security.permissions import PermissionManager
 from backend.app.tools.registry import ToolRegistry
 from backend.app.tools.system_tools import system_registry
+from backend.app.intelligence.mission_verification import verify_step
+from backend.app.intelligence.failure import classify_failure
+from backend.app.core.action_authority import ActionAuthority
+from backend.app.events import event_bus, EventTopic
 
 
 MAX_CODING_FIX_ATTEMPTS = 3
@@ -61,6 +65,7 @@ class LeonWorker:
         self._notifications = notifications or notification_service
         self._coding_agent = coding_agent or CodingAgent()
         self._research_agent = ResearchAgent(self._registry, self._permission_manager)
+        self._authority = ActionAuthority(self._registry, self._permission_manager)
 
     def start(self):
         if self._running:
@@ -144,7 +149,7 @@ class LeonWorker:
                 if self._cancelled(task_id):
                     return self._cancel(task_id)
 
-                set_stage(task_id, "executing", 10, "Execution started.")
+                set_stage(task_id, "running" if task.get("task_type") == "mission" else "executing", 10, "Execution started.")
                 total_steps = len(plan["steps"])
                 completed_steps = sum(
                     step["status"] == "completed" for step in plan["steps"]
@@ -159,21 +164,46 @@ class LeonWorker:
                     if self._cancelled(task_id):
                         return self._cancel(task_id)
 
+                    dependencies = step.get("depends_on") or []
+                    if dependencies:
+                        current_plan = planner_service.get_plan(task_id) or {"steps": []}
+                        completed_numbers = {
+                            item["step_number"] for item in plan["steps"]
+                            if item["status"] == "completed"
+                        }
+                        completed_numbers.update(
+                            item["step_number"] for item in current_plan["steps"]
+                            if item["status"] == "completed"
+                        )
+                        if not set(dependencies).issubset(completed_numbers):
+                            raise RuntimeError(f"Step {step['step_number']} prerequisites are not complete")
+
                     current_step = step
+                    if task.get("task_type") == "mission":
+                        event_bus.emit(EventTopic.MISSION_STEP_STARTED, mission_id=task_id, step=step["step_number"])
                     self._transition_step(step, "running")
                     try:
                         result = self._execute_step(step)
+                        verification_passed, verification_message = verify_step(step, result)
+                        if not verification_passed:
+                            log_event(task_id, "verification_failed", verification_message)
+                            raise RuntimeError(verification_message)
                     except Exception as exc:
                         self._transition_step(step, "failed", str(exc))
                         raise
 
                     self._transition_step(step, "completed", result)
+                    update_task(task_id, checkpoint=f"step_{step['step_number']}_completed", verification_status="passed")
+                    log_event(task_id, "verification_passed", f"Step {step['step_number']} verified.")
+                    if task.get("task_type") == "mission":
+                        event_bus.emit(EventTopic.MISSION_VERIFICATION_PASSED, mission_id=task_id, step=step["step_number"])
+                        event_bus.emit(EventTopic.MISSION_STEP_COMPLETED, mission_id=task_id, step=step["step_number"])
                     current_step = None
                     completed_steps += 1
                     update_task(
                         task_id,
-                        status="executing",
-                        current_stage="executing",
+                        status="running" if task.get("task_type") == "mission" else "executing",
+                        current_stage="running" if task.get("task_type") == "mission" else "executing",
                         progress=min(90, int(90 * completed_steps / total_steps)),
                     )
             set_stage(
@@ -193,6 +223,7 @@ class LeonWorker:
                 status="completed",
                 current_stage="completed",
                 progress=100,
+                verification_status="passed",
                 result=final_result,
                 summary=final_result,
                 completed_at=datetime.now(timezone.utc).isoformat(),
@@ -203,12 +234,30 @@ class LeonWorker:
                 "completed",
                 "Task completed successfully.",
             )
+            if task.get("task_type") == "mission":
+                event_bus.emit(EventTopic.MISSION_COMPLETED, mission_id=task_id)
             completed_task = get_task(task_id)
             if task.get("notify_on_completion", 1) and completed_task:
                 self._notifications.notify_task_outcome(completed_task, "completed")
 
         except Exception as exc:
             current = get_task(task_id)
+            failure_type = classify_failure(exc)
+            log_event(task_id, "failure_classified", f"Failure classified as {failure_type.value}.")
+            if current and current.get("task_type") == "mission" and isinstance(exc, PermissionError):
+                update_task(
+                    task_id,
+                    status="awaiting_confirmation",
+                    current_stage="awaiting_confirmation",
+                    waiting_reason="User approval is required before the next action.",
+                    error=str(exc),
+                )
+                if current.get("notify_on_completion", 1):
+                    waiting_task = get_task(task_id)
+                    if waiting_task:
+                        self._notifications.notify_task_outcome(waiting_task, "waiting")
+                event_bus.emit(EventTopic.MISSION_CONFIRMATION_REQUIRED, mission_id=task_id)
+                return
 
             coding_limit_reached = bool(
                 current_step and current_step.get("tool_name") == "coding_execute"
@@ -224,10 +273,11 @@ class LeonWorker:
                 update_task(
                     task_id,
                     status="queued",
-                    current_stage="queued",
-                    progress=0,
+                    current_stage="retrying" if current.get("task_type") == "mission" else "queued",
+                    progress=current.get("progress", 0),
                     retry_count=retry_count,
                     error=str(exc),
+                    verification_status="failed",
                 )
 
                 if current_step is not None:
@@ -238,12 +288,15 @@ class LeonWorker:
                     "retry",
                     f"Retrying task ({retry_count}/{current['max_retries']}).",
                 )
+                if current.get("task_type") == "mission":
+                    event_bus.emit(EventTopic.MISSION_RETRY, mission_id=task_id, retry_count=retry_count)
             else:
                 update_task(
                     task_id,
                     status="failed",
                     current_stage="failed",
                     error=str(exc),
+                    verification_status="failed",
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
 
@@ -252,6 +305,8 @@ class LeonWorker:
                     "failed",
                     str(exc),
                 )
+                if current and current.get("task_type") == "mission":
+                    event_bus.emit(EventTopic.MISSION_FAILED, mission_id=task_id, failure_type=failure_type.value)
                 failed_task = get_task(task_id)
                 if current and current.get("notify_on_completion", 1) and failed_task:
                     self._notifications.notify_task_outcome(failed_task, "failed")
@@ -278,18 +333,19 @@ class LeonWorker:
         tool = self._registry.get(tool_name)
         if tool is None:
             raise ValueError(f"Unknown tool: {tool_name}")
-        if not self._permission_manager.can_execute(tool, confirmed=False):
-            raise PermissionError(f"Tool '{tool_name}' cannot be executed")
-
         arguments = step.get("arguments") or {}
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object")
+
+        confirmed = bool(get_task(step["task_id"]).get("approval_granted"))
+        if not self._permission_manager.can_execute(tool, confirmed=confirmed):
+            raise PermissionError(f"Tool '{tool_name}' cannot be executed")
 
         if tool_name == "coding_execute":
             return self._execute_coding_step(step)
 
         log_event(step["task_id"], "tool_execution", f"Executing tool '{tool_name}'.")
-        result = asyncio.run(self._registry.execute(tool_name, **arguments))
+        result = asyncio.run(self._authority.execute(tool_name, arguments, confirmed=confirmed))
         return json.dumps(result, default=str)
 
     def _execute_coding_step(self, step: dict) -> str:
@@ -314,7 +370,10 @@ class LeonWorker:
                 "tool_execution",
                 f"Executing coding step attempt {attempt + 1}/{MAX_CODING_FIX_ATTEMPTS + 1}.",
             )
-            result = asyncio.run(self._registry.execute("coding_execute", **arguments))
+            # Coding is still an ordinary registered tool; route it through
+            # the same authority used by every other mission capability.
+            confirmed = bool(get_task(task_id).get("approval_granted"))
+            result = asyncio.run(self._authority.execute("coding_execute", arguments, confirmed=confirmed))
             last_result = result if isinstance(result, dict) else {"result": result}
             exit_code = last_result.get("exit_code")
             timed_out = last_result.get("timed_out", False)

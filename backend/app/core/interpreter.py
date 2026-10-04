@@ -3,7 +3,7 @@ import re
 from backend.app.core.router import ModelRouter
 from pydantic import BaseModel, Field
 from backend.app.memory.memory import memory_service
-from backend.app.core.capabilities import Capability, CapabilityIntent, classify_command, is_datetime_request
+from backend.app.core.capabilities import Capability, CapabilityIntent, classify_command, is_datetime_request, is_system_state_request
 
 
 class CommandIntent(BaseModel):
@@ -14,6 +14,7 @@ class CommandIntent(BaseModel):
     action: str = "chat"
     arguments: dict[str, str] = Field(default_factory=dict)
     requires_confirmation: bool = False
+    is_mission: bool = False
 
 
 class LeonInterpreter:
@@ -31,12 +32,25 @@ class LeonInterpreter:
                 action="current",
                 arguments={},
             )
+        if proposal.capability == Capability.SYSTEM_STATE or is_system_state_request(message):
+            return CommandIntent(
+                intent="action",
+                title=message,
+                task_type="standard",
+                capability=Capability.SYSTEM_STATE.value,
+                action="status",
+                arguments={},
+            )
         if self._is_simple_chat(message):
             return CommandIntent(intent="chat", title="")
         if proposal.capability != Capability.CHAT:
             return self._fallback(message, proposal)
-        if self.router.provider_name == "mock":
-            return self._fallback(message, proposal)
+        fallback = self._fallback(message, proposal)
+        # Normal conversation does not need a model call just to decide that
+        # it is conversation. Keep the model classifier for task-like or
+        # ambiguous requests where it can still improve intent selection.
+        if fallback.intent == "chat" or self.router.provider_name == "mock":
+            return fallback
 
         prompt = f"""
 Classify this user request.
@@ -115,4 +129,11 @@ REQUEST:
             action=proposal.action,
             arguments=proposal.arguments,
             requires_confirmation=proposal.requires_confirmation,
+            is_mission=self._looks_like_mission(message),
         )
+
+    @staticmethod
+    def _looks_like_mission(message: str) -> bool:
+        value = message.lower()
+        verbs = sum(bool(re.search(rf"\b{word}\b", value)) for word in ("build", "create", "implement", "test", "fix", "repair", "inspect", "research"))
+        return verbs >= 2 or bool(re.search(r"\b(keep fixing|until it works|when it is done|when done)\b", value))

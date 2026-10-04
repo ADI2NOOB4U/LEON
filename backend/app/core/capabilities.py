@@ -13,6 +13,8 @@ from enum import StrEnum
 class Capability(StrEnum):
     CHAT = "CHAT"
     DATETIME = "DATETIME"
+    SYSTEM_STATE = "SYSTEM_STATE"
+    WEATHER = "WEATHER"
     VISION = "VISION"
     OCR = "OCR"
     SCREEN = "SCREEN"
@@ -25,6 +27,7 @@ class Capability(StrEnum):
     CODING = "CODING"
     SCHEDULER = "SCHEDULER"
     NOTIFICATIONS = "NOTIFICATIONS"
+    EMAIL = "EMAIL"
 
 
 @dataclass(frozen=True)
@@ -53,9 +56,27 @@ def is_datetime_request(text: str) -> bool:
         )
         or re.search(r"\b(?:current|today s|todays)\s+(?:date and time|time and date|date|time)\b", value)
         or re.search(r"\b(?:date and time|time and date|date|time)\b(?:\s+\w+){0,3}\s+\b(?:is it|now|currently)\b", value)
+        or re.search(r"\b(?:what\s+time\s+is\s+it|what\s+is\s+today(?:'s|s)?\s+date|what\s+is\s+today(?:'s|s)?\s+date\s+and\s+time)\b", value)
         or "date and time" in value
         or "time and date" in value
     )
+
+
+def is_system_state_request(text: str) -> bool:
+    """Detect direct status questions such as "what are you doing?"."""
+    value = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    if not value:
+        return False
+
+    return bool(
+        re.search(r"\bwhat\s+(?:are|is)\s+(?:you|leon)\s+(?:doing|up to|working on|busy with|doing right now)\b", value)
+        or re.search(r"\b(?:what\s+are\s+you\s+doing\?|what\s+are\s+you\s+up\s+to\?)", value)
+        or re.search(r"\b(?:how\s+are\s+you\s+doing|how\s+are\s+you)\b", value)
+    )
+
+
+def is_weather_request(text: str) -> bool:
+    return bool(re.search(r"\b(?:weather|forecast|temperature)\b", text, re.I))
 
 
 def classify_command(text: str) -> CapabilityIntent:
@@ -70,6 +91,12 @@ def classify_command(text: str) -> CapabilityIntent:
 
     if is_datetime_request(value):
         return CapabilityIntent(Capability.DATETIME, "current")
+    if is_system_state_request(value):
+        return CapabilityIntent(Capability.SYSTEM_STATE, "status", title=text)
+    if is_weather_request(value):
+        return CapabilityIntent(Capability.WEATHER, "current", title=text)
+    if re.search(r"\b(?:send|write|compose)\b.*\b(?:email|e-mail|gmail)\b|\b(?:email|e-mail|gmail)\b.*\b(?:send|write|compose)\b", value):
+        return CapabilityIntent(Capability.EMAIL, "send", title=text, requires_confirmation=True)
     if re.search(r"\b(cancel|stop)\b.*\b(task|that|what you(?:'re| are) doing)\b|^stop$|^cancel that$", value):
         return CapabilityIntent(Capability.TASKS, "cancel")
     if re.search(r"\b(recent|current) tasks?\b|task status", value):
@@ -81,6 +108,19 @@ def classify_command(text: str) -> CapabilityIntent:
         return CapabilityIntent(Capability.OCR if action == "ocr" else Capability.SCREEN, action)
     if re.search(r"\b(screenshot|screen capture|capture my screen)\b", value):
         return CapabilityIntent(Capability.SCREEN, "capture")
+    hindi_media = re.search(r"\b(?:spotify\s+chalao|gaana\s+(?:pause|resume)\s+karo|agla\s+gaana\s+chalao|pichla\s+gaana\s+chalao|abhi\s+kaunsa\s+gaana\s+baj\s+raha\s+hai)\b", value)
+    if hindi_media:
+        if "kaunsa" in value or "baj raha" in value:
+            return CapabilityIntent(Capability.MEDIA, "current", title=text)
+        if "pause" in value:
+            return CapabilityIntent(Capability.MEDIA, "pause", title=text)
+        if "resume" in value:
+            return CapabilityIntent(Capability.MEDIA, "resume", title=text)
+        if "agla" in value:
+            return CapabilityIntent(Capability.MEDIA, "next", title=text)
+        if "pichla" in value:
+            return CapabilityIntent(Capability.MEDIA, "previous", title=text)
+        return CapabilityIntent(Capability.MEDIA, "play", title=text)
     if re.search(r"\b(play|start|put on|listen to|pause|resume|stop|next|previous|skip|volume|what(?:'s| is) playing)\b", value):
         if "playing" in value:
             action = "current"

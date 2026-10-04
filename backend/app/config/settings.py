@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     vision_max_height: int = 4096
     vision_timeout_seconds: float = 120.0
     media_enabled: bool = True
+    windows_media_enabled: bool = False
     media_default_provider: str = "auto"
     media_confirm_external: bool = True
     spotify_client_id: str = ""

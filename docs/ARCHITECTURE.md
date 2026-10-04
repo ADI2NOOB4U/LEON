@@ -8,14 +8,17 @@
 - Core service boundaries: model router, agent/interpreter, task manager, planner, tool registry, memory service.
 - Permission level gating for tool execution.
 - Background worker loop for queued task execution and cancellation.
+- Mission facade over the existing task engine with durable checkpoints, structured verification, bounded retries, failure classification, user wait/approval controls, and mission event history.
 
 ### PARTIAL
 - Model provider flow is abstracted and includes a mock fallback path so the app continues to function when Ollama or Colibri is unavailable.
 - Frontend uses a central API client but is still a clean UI shell instead of a full product app.
+- Mission event history is in-process; durable task logs remain the recovery and audit source of truth.
 
 ### NOT STARTED
 - Real browser automation, desktop integration, voice processing, and cross-device synchronization.
 - Advanced planner/executor orchestration beyond the current queued task engine.
+- Production multi-user identity, tenant isolation, and distributed event delivery.
 
 ### BLOCKED
 - Real LLM execution is blocked until a provider runtime is available and configured.

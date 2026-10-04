@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -45,6 +45,11 @@ def init_db() -> None:
             retry_count INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 2,
             cancel_requested INTEGER NOT NULL DEFAULT 0
+            ,checkpoint TEXT
+            ,context TEXT
+            ,verification_status TEXT NOT NULL DEFAULT 'pending'
+            ,waiting_reason TEXT
+            ,approval_granted INTEGER NOT NULL DEFAULT 0
         )
     """)
 
@@ -67,6 +72,11 @@ def init_db() -> None:
         "summary": "ALTER TABLE tasks ADD COLUMN summary TEXT",
         "priority": "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'",
         "wait_for_user_reason": "ALTER TABLE tasks ADD COLUMN wait_for_user_reason TEXT",
+        "checkpoint": "ALTER TABLE tasks ADD COLUMN checkpoint TEXT",
+        "context": "ALTER TABLE tasks ADD COLUMN context TEXT",
+        "verification_status": "ALTER TABLE tasks ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'pending'",
+        "waiting_reason": "ALTER TABLE tasks ADD COLUMN waiting_reason TEXT",
+        "approval_granted": "ALTER TABLE tasks ADD COLUMN approval_granted INTEGER NOT NULL DEFAULT 0",
     }
 
     for name, sql in migrations.items():
@@ -105,6 +115,171 @@ def init_db() -> None:
             importance REAL NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        )
+    """)
+
+    # Structured personal memory lives beside (and reuses) the legacy memory
+    # store.  JSON keeps the profile extensible without introducing another DB.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_profile (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            data TEXT NOT NULL DEFAULT '{}',
+            settings TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS personal_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_type TEXT NOT NULL,
+            category TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            privacy_level TEXT NOT NULL DEFAULT 'NORMAL',
+            retention TEXT NOT NULL DEFAULT 'DURABLE',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_confirmed TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            supersedes_id INTEGER,
+            UNIQUE(category, key, value, active)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            relationship_type TEXT NOT NULL DEFAULT 'other',
+            important_dates TEXT NOT NULL DEFAULT '{}',
+            preferences TEXT NOT NULL DEFAULT '{}',
+            notes TEXT,
+            source TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            privacy_level TEXT NOT NULL DEFAULT 'PRIVATE',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS important_dates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            date_value TEXT NOT NULL,
+            time_value TEXT,
+            date_type TEXT NOT NULL DEFAULT 'custom',
+            person_id TEXT,
+            notes TEXT,
+            source TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            privacy_level TEXT NOT NULL DEFAULT 'PRIVATE',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(name, date_value, active)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS memory_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            memory_id INTEGER,
+            category TEXT,
+            key TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_entities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            description TEXT,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(name, entity_type)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_name TEXT NOT NULL,
+            target_name TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            UNIQUE(source_name, target_name, relation_type)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_name TEXT NOT NULL,
+            fact_type TEXT NOT NULL,
+            statement TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            source TEXT NOT NULL DEFAULT 'user',
+            importance REAL NOT NULL DEFAULT 0.5,
+            last_verified TEXT,
+            stale INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS improvement_profile (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS improvement_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_hash TEXT NOT NULL,
+            route TEXT,
+            outcome TEXT NOT NULL,
+            rating INTEGER,
+            comment TEXT,
+            verified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS improvement_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            rationale TEXT NOT NULL,
+            change_json TEXT NOT NULL,
+            baseline_score REAL NOT NULL DEFAULT 0,
+            candidate_score REAL,
+            status TEXT NOT NULL DEFAULT 'evaluated',
+            created_at TEXT NOT NULL,
+            activated_at TEXT,
+            rolled_back_at TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS security_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            action TEXT NOT NULL,
+            tool TEXT,
+            risk TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            authorized INTEGER NOT NULL DEFAULT 0,
+            verified INTEGER NOT NULL DEFAULT 0,
+            details TEXT NOT NULL DEFAULT '{}'
         )
     """)
 
@@ -149,6 +324,18 @@ def init_db() -> None:
         conn.execute("ALTER TABLE plan_steps ADD COLUMN tool_name TEXT")
     if "arguments" not in plan_step_columns:
         conn.execute("ALTER TABLE plan_steps ADD COLUMN arguments TEXT")
+    if "expected_result" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN expected_result TEXT")
+    if "verification_method" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN verification_method TEXT NOT NULL DEFAULT 'result'")
+    if "permission_level" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN permission_level TEXT NOT NULL DEFAULT 'SAFE'")
+    if "timeout_seconds" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 120")
+    if "retry_limit" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN retry_limit INTEGER NOT NULL DEFAULT 0")
+    if "depends_on" not in plan_step_columns:
+        conn.execute("ALTER TABLE plan_steps ADD COLUMN depends_on TEXT")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS scheduled_jobs (

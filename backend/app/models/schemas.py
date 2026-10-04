@@ -25,6 +25,18 @@ class VoiceTurnResponse(BaseModel):
     audio_bytes: int = 0
 
 
+class VoiceSpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+
 class VisionResponse(BaseModel):
     success: bool
     description: str
@@ -79,6 +91,12 @@ class PlannedStep(BaseModel):
     description: str = Field(min_length=1, max_length=2000)
     tool_name: str | None = Field(default=None, min_length=1, max_length=100)
     arguments: dict[str, Any] | None = None
+    expected_result: str | None = Field(default=None, max_length=2000)
+    verification_method: str = Field(default="result", max_length=100)
+    permission_level: str = Field(default="SAFE", pattern="^(SAFE|CONFIRM|BLOCKED)$")
+    timeout_seconds: int = Field(default=120, ge=1, le=3600)
+    retry_limit: int = Field(default=0, ge=0, le=10)
+    depends_on: list[int] = Field(default_factory=list, max_length=20)
 
     @field_validator("title", "description")
     @classmethod
@@ -129,6 +147,12 @@ class PlanStepResponse(BaseModel):
     arguments: dict[str, Any] | None = None
     status: PlanStepStatus
     result: str | None = None
+    expected_result: str | None = None
+    verification_method: str = "result"
+    permission_level: str = "SAFE"
+    timeout_seconds: int = 120
+    retry_limit: int = 0
+    depends_on: list[int] = []
 
 
 class PlanResponse(BaseModel):

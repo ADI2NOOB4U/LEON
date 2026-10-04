@@ -5,7 +5,6 @@ import { SPRING } from '../../theme/easing';
 import { useLeonStore } from '../../store/useLeonStore';
 import { soundSystem } from '../../audio/soundSystem';
 import { sendCommand } from '../../api/client';
-import type { Task } from '../../types';
 
 export function CommandBar() {
   const [input, setInput] = useState('');
@@ -14,7 +13,6 @@ export function CommandBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const state = useLeonStore((s) => s.state);
   const setState = useLeonStore((s) => s.setState);
-  const addTask = useLeonStore((s) => s.addTask);
   const stateColors = COLORS.state[state];
 
   const handleSubmit = useCallback(async () => {
@@ -25,62 +23,19 @@ export function CommandBar() {
     setIsSubmitting(true);
     setState('thinking');
 
-    // Create a new task
-    const newTask: Task = {
-      id: crypto.randomUUID(),
-      name: trimmed.length > 40 ? trimmed.slice(0, 40) + '...' : trimmed,
-      description: trimmed,
-      status: 'active',
-      priority: 'medium',
-      progress: 0,
-      currentStep: 1,
-      totalSteps: 5,
-      stepName: 'Initializing',
-      steps: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    addTask(newTask);
     setInput('');
 
     try {
       await sendCommand(trimmed);
-      setState('executing');
+      setState('success');
       soundSystem.success();
     } catch {
-      // Simulate task progression even when API is offline
-      simulateTaskProgression(newTask.id);
+      setState('error');
+      soundSystem.error();
     } finally {
       setIsSubmitting(false);
     }
-  }, [input, isSubmitting, setState, addTask]);
-
-  const simulateTaskProgression = useCallback((taskId: string) => {
-    const updateTask = useLeonStore.getState().updateTask;
-    const steps = [
-      { step: 1, name: 'Analyzing request', progress: 15, state: 'thinking' as const },
-      { step: 2, name: 'Planning approach', progress: 30, state: 'thinking' as const },
-      { step: 3, name: 'Executing task', progress: 55, state: 'executing' as const },
-      { step: 4, name: 'Processing results', progress: 80, state: 'executing' as const },
-      { step: 5, name: 'Finalizing', progress: 100, state: 'success' as const },
-    ];
-
-    steps.forEach((s, i) => {
-      setTimeout(() => {
-        updateTask(taskId, {
-          currentStep: s.step,
-          stepName: s.name,
-          progress: s.progress,
-          status: s.progress === 100 ? 'completed' : 'active',
-        });
-        setState(s.state);
-        if (s.progress === 100) {
-          soundSystem.success();
-          setTimeout(() => setState('idle'), 2000);
-        }
-      }, (i + 1) * 2000);
-    });
-  }, [setState]);
+  }, [input, isSubmitting, setState]);
 
   return (
     <motion.div

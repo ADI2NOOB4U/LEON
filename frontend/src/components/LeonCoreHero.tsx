@@ -9,7 +9,16 @@ interface LeonCoreHeroProps {
   voiceState: string
   activeNav: string
   onActivate?: () => void
+  onQuickPrompt?: (prompt: string) => void
 }
+
+const quickPrompts = [
+  { label: 'Summarize news', prompt: 'Summarize the latest important news' },
+  { label: 'Play music', prompt: 'Play music on Spotify' },
+  { label: 'Play on YouTube Music', prompt: 'Play music on YouTube Music' },
+  { label: 'System status', prompt: 'Check all system statuses and health' },
+  { label: 'Show memory', prompt: 'What memories and context do you have stored?' },
+]
 
 export function LeonCoreHero({
   state,
@@ -18,83 +27,130 @@ export function LeonCoreHero({
   voiceState,
   activeNav,
   onActivate,
+  onQuickPrompt,
 }: LeonCoreHeroProps) {
-  const statusLabel = useMemo(() => {
-    if (connectionState === 'connecting') return 'CONNECTING'
-    if (connectionState === 'offline') return 'OFFLINE'
-    if (voiceState === 'listening') return 'LISTENING'
-    if (voiceState === 'processing') return 'PROCESSING VOICE'
-    if (voiceState === 'speaking') return 'SPEAKING'
-    if (state === 'thinking') return 'PROCESSING'
-    if (state === 'executing') return 'WORKING'
-    if (state === 'success') return 'COMPLETED'
-    if (state === 'error') return 'ATTENTION REQUIRED'
-    return 'STANDBY'
+  const statusInfo = useMemo(() => {
+    if (connectionState === 'connecting') {
+      return { label: 'Connecting...', color: 'amber', badge: 'CONNECTING' }
+    }
+    if (connectionState === 'offline') {
+      return { label: 'Service Offline', color: 'rose', badge: 'OFFLINE' }
+    }
+    if (voiceState === 'listening') {
+      return { label: 'Listening to your voice...', color: 'emerald', badge: 'LISTENING' }
+    }
+    if (voiceState === 'processing') {
+      return { label: 'Processing speech...', color: 'indigo', badge: 'PROCESSING' }
+    }
+    if (voiceState === 'speaking') {
+      return { label: 'Speaking...', color: 'emerald', badge: 'SPEAKING' }
+    }
+    if (state === 'thinking') {
+      return { label: 'Thinking & Planning...', color: 'indigo', badge: 'THINKING' }
+    }
+    if (state === 'executing') {
+      return { label: 'Executing Task...', color: 'cyan', badge: 'WORKING' }
+    }
+    if (state === 'success') {
+      return { label: 'Task Complete', color: 'emerald', badge: 'READY' }
+    }
+    if (state === 'error') {
+      return { label: 'Attention Required', color: 'rose', badge: 'ERROR' }
+    }
+    return { label: 'Ready for instructions', color: 'indigo', badge: 'ACTIVE' }
   }, [state, connectionState, voiceState])
 
   return (
     <div
-      className={`leon-core-hero state-${state}`}
+      className={`hero-container state-${state} color-${statusInfo.color}`}
       onClick={onActivate}
       role="region"
-      aria-label="LEON Core hero surface"
+      aria-label="LEON Core Assistant"
     >
-      <div className="hero-surface-glow" aria-hidden="true" />
-      <div className="hero-ambient-frame" aria-hidden="true">
-        <span className="frame-corner top-left" />
-        <span className="frame-corner top-right" />
-        <span className="frame-corner bottom-left" />
-        <span className="frame-corner bottom-right" />
-        <span className="frame-line horizontal" />
-      </div>
+      {/* Dynamic Background Glow */}
+      <div className="hero-glow-backdrop" aria-hidden="true" />
 
-      <div className="hero-centerpiece">
-        <div className="hero-mark-badge" aria-hidden="true">
-          <span className="mark-ring outer" />
-          <span className="mark-ring inner" />
-          <span className="mark-text">L</span>
-          <span className="mark-dot" />
+      {/* Main Core Orb / Visualizer */}
+      <div className="hero-core-wrapper">
+        <div className="core-orb-outer">
+          <div className="core-orb-pulse" />
+          <div className="core-orb-inner">
+            <div className="core-logo-mark">
+              <span className="core-letter">L</span>
+              <span className="core-dot" />
+            </div>
+          </div>
         </div>
 
-        <div className="hero-status-pill">
-          <span className={`status-indicator-dot ${state}`} />
-          <span className="status-indicator-text">{statusLabel}</span>
+        {/* Live Status Badge */}
+        <div className={`hero-badge badge-${statusInfo.color}`}>
+          <span className="badge-pulse-dot" />
+          <span className="badge-text">{statusInfo.badge}</span>
         </div>
       </div>
 
-      <div className="hero-telemetry-bar">
-        <div className="telemetry-item">
-          <span className="telemetry-label">BACKEND</span>
-          <span className={`telemetry-val ${connected ? 'ready' : 'off'}`}>
+      {/* Hero Content */}
+      <div className="hero-content-block">
+        <h2 className="hero-title">
+          {voiceState === 'listening'
+            ? 'Listening to you...'
+            : voiceState === 'speaking'
+            ? 'Speaking reply...'
+            : state === 'executing'
+            ? 'Processing current task...'
+            : 'How can I assist you today?'}
+        </h2>
+        <p className="hero-subtitle">
+          {connected
+            ? 'Voice recognition, task automation, media control, and multimodal vision are online.'
+            : 'Connecting to local LEON server... Ensure the backend service is running.'}
+        </p>
+
+        {/* Quick Suggestion Prompts */}
+        {connected && onQuickPrompt && (
+          <div className="hero-quick-prompts">
+            <span className="prompts-label">Suggested actions:</span>
+            <div className="prompts-grid">
+              {quickPrompts.map(({ label, prompt }) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="quick-prompt-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onQuickPrompt(prompt)
+                  }}
+                  data-sound="click"
+                >
+                  <span className="prompt-icon">✦</span>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Telemetry Metric Cards */}
+      <div className="hero-metrics-row">
+        <div className="metric-card">
+          <span className="metric-label">SERVICE STATUS</span>
+          <strong className={`metric-value ${connected ? 'status-online' : 'status-offline'}`}>
             {connected ? 'ONLINE' : connectionState.toUpperCase()}
-          </span>
+          </strong>
         </div>
-        <div className="telemetry-divider" />
-        <div className="telemetry-item">
-          <span className="telemetry-label">VISION</span>
-          <span className={`telemetry-val ${connected ? 'ready' : 'off'}`}>
-            NOT CHECKED
-          </span>
-        </div>
-        <div className="telemetry-divider" />
-        <div className="telemetry-item">
-          <span className="telemetry-label">VOICE</span>
-          <span className={`telemetry-val ${voiceState !== 'idle' ? 'active' : connected ? 'ready' : 'off'}`}>
+        <div className="metric-card">
+          <span className="metric-label">VOICE ENGINE</span>
+          <strong className={`metric-value ${voiceState !== 'idle' ? 'status-active' : connected ? 'status-online' : 'status-offline'}`}>
             {voiceState !== 'idle' ? voiceState.toUpperCase() : 'STANDBY'}
-          </span>
+          </strong>
         </div>
-      </div>
-
-      <div className="hero-footnote">
-        <span className="footnote-text">
-          {activeNav === 'Missions'
-            ? 'MISSION CONTROL ACTIVE'
-            : connectionState === 'offline'
-              ? 'CONNECTION INTERRUPTED — STANDBY MODE'
-              : connectionState === 'connecting'
-                ? 'CONNECTING TO LEON'
-                : 'LEON PERSONAL SYSTEM'}
-        </span>
+        <div className="metric-card">
+          <span className="metric-label">WORKSPACE</span>
+          <strong className="metric-value status-neutral">
+            {activeNav.toUpperCase()}
+          </strong>
+        </div>
       </div>
     </div>
   )

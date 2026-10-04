@@ -1,9 +1,9 @@
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 
 from backend.app.api.chat import agent
-from backend.app.models.schemas import VoiceTurnResponse
+from backend.app.models.schemas import VoiceSpeechRequest, VoiceTurnResponse
 from backend.app.voice.service import MAX_AUDIO_BYTES, LeonVoiceService, VoiceServiceError
 
 
@@ -72,3 +72,15 @@ async def voice_turn(audio: UploadFile = File(...)) -> VoiceTurnResponse:
             status_code=exc.status_code,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
+
+
+@router.post("/voice/speech")
+async def synthesize_speech(request: VoiceSpeechRequest) -> Response:
+    try:
+        speech = await voice_service.synthesize_text(request.text)
+    except VoiceServiceError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return Response(content=speech, media_type="audio/wav")

@@ -24,10 +24,11 @@ class FakeAgent:
 
 
 class FakeWhisperModel:
-    def __init__(self):
+    def __init__(self, transcript="What is the weather?"):
         self.options = []
         self.thread_id = None
         self.audio_samples = None
+        self.transcript = transcript
 
     def transcribe(self, audio_samples, **options):
         self.thread_id = threading.get_ident()
@@ -38,7 +39,7 @@ class FakeWhisperModel:
         assert audio_samples.size
 
         class Segment:
-            text = "What is the weather?"
+            text = self.transcript
 
         return iter([Segment()]), object()
 
@@ -120,6 +121,81 @@ def test_voice_turn_transcribes_calls_agent_and_returns_speech(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_voice_media_command_is_explicitly_confirmed(monkeypatch):
+    from backend.app.intelligence import intelligence_core
+
+    agent = FakeAgent()
+    service = LeonVoiceService(agent)
+    piper = FakePiperVoice()
+    monkeypatch.setattr(
+        service,
+        "_load_stt_model",
+        lambda: FakeWhisperModel("Play Here Comes the Sun on YouTube Music."),
+    )
+    monkeypatch.setattr(service, "_load_tts_voice", lambda: piper)
+    monkeypatch.setattr(
+        intelligence_core,
+        "route",
+        lambda _transcript: SimpleNamespace(route="media.spotify"),
+    )
+    calls = {}
+
+    async def execute_command(request):
+        calls["confirmed"] = request.confirmed
+        return {"message": "Opened YouTube Music search."}
+
+    monkeypatch.setattr("backend.app.api.command.command", execute_command)
+
+    result = asyncio.run(service.process(wav_recording(), ".wav"))
+
+    assert calls["confirmed"] is True
+    assert result["assistant"] == "Opened YouTube Music search."
+
+
+def test_transcription_retries_without_vad_for_quiet_speech(tmp_path, monkeypatch):
+    class VADFallbackWhisper:
+        def __init__(self):
+            self.options = []
+
+        def transcribe(self, audio_samples, **options):
+            self.options.append(options)
+
+            class Segment:
+                text = "" if options["vad_filter"] else "Hello, Leon."
+
+            return iter([Segment()]), object()
+
+    whisper = VADFallbackWhisper()
+    service = LeonVoiceService(
+        FakeAgent(),
+        stt_model_path=tmp_path / "unused-model",
+    )
+    monkeypatch.setattr(service, "_load_stt_model", lambda: whisper)
+
+    transcript = service._transcribe(wav_recording(), ".wav")
+
+    assert transcript == "Hello, Leon."
+    assert whisper.options == [{"vad_filter": True}, {"vad_filter": False}]
+
+
+def test_transcription_still_rejects_audio_with_no_recognized_speech(
+    tmp_path,
+    monkeypatch,
+):
+    class SilentWhisper:
+        def transcribe(self, audio_samples, **options):
+            return iter([]), object()
+
+    service = LeonVoiceService(
+        FakeAgent(),
+        stt_model_path=tmp_path / "unused-model",
+    )
+    monkeypatch.setattr(service, "_load_stt_model", lambda: SilentWhisper())
+
+    with pytest.raises(VoiceServiceError, match="No speech was detected"):
+        service._transcribe(wav_recording(), ".wav")
+
+
 def test_voice_tts_receives_only_user_facing_agent_text(monkeypatch):
     from backend.app.core.agent import LeonAgent
 
@@ -131,7 +207,11 @@ def test_voice_tts_receives_only_user_facing_agent_text(monkeypatch):
     agent.router = ThinkingRouter()
     piper = FakePiperVoice()
     service = LeonVoiceService(agent)
-    monkeypatch.setattr(service, "_load_stt_model", lambda: FakeWhisperModel())
+    monkeypatch.setattr(
+        service,
+        "_load_stt_model",
+        lambda: FakeWhisperModel("What did you say?"),
+    )
     monkeypatch.setattr(service, "_load_tts_voice", lambda: piper)
 
     result = asyncio.run(service.process(wav_recording(), ".wav"))
@@ -368,6 +448,66 @@ def test_voice_api_accepts_audio_upload(monkeypatch):
     assert response.status_code == 200
     assert response.json()["transcript"] == "Hello"
     assert response.json()["assistant"] == "Hi there."
+
+
+def test_voice_speech_api_returns_backend_generated_audio(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.app.api import voice
+    from backend.app.main import app
+
+    calls = []
+
+    def synthesize(text):
+        calls.append(text)
+        return b"RIFF-generated-audio", "piper", "test-voice", None
+
+    monkeypatch.setattr(voice.voice_service, "_synthesize", synthesize)
+    response = TestClient(app).post(
+        "/api/voice/speech",
+        json={"text": "  Read this reply aloud.  "},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFF-generated-audio"
+    assert calls == ["Read this reply aloud."]
+
+
+def test_voice_speech_api_surfaces_tts_errors(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.app.api import voice
+    from backend.app.main import app
+
+    def fail_synthesis(_text):
+        raise VoiceServiceError(
+            "The configured voice provider is unavailable.",
+            503,
+            "tts_unavailable",
+        )
+
+    monkeypatch.setattr(voice.voice_service, "_synthesize", fail_synthesis)
+    response = TestClient(app).post(
+        "/api/voice/speech",
+        json={"text": "Read this reply aloud."},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "tts_unavailable",
+        "message": "The configured voice provider is unavailable.",
+    }
+
+
+def test_voice_speech_api_rejects_blank_text():
+    from fastapi.testclient import TestClient
+
+    from backend.app.main import app
+
+    response = TestClient(app).post("/api/voice/speech", json={"text": "   "})
+
+    assert response.status_code == 422
 
 
 def test_webm_opus_multipart_upload_completes_voice_turn(monkeypatch):

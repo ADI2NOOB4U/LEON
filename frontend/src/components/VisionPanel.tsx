@@ -12,12 +12,12 @@ type VisionState =
   | 'RESULT'
   | 'ERROR'
 
-const modes: { value: VisionMode; label: string }[] = [
-  { value: 'general', label: 'General' },
-  { value: 'ocr', label: 'OCR' },
-  { value: 'screen', label: 'Screen' },
-  { value: 'document', label: 'Document' },
-  { value: 'object', label: 'Object' },
+const modes: { value: VisionMode; label: string; desc: string }[] = [
+  { value: 'general', label: 'General', desc: 'Detailed scene description' },
+  { value: 'ocr', label: 'OCR & Text', desc: 'Extract readable text' },
+  { value: 'screen', label: 'Screen / UI', desc: 'Analyze user interfaces' },
+  { value: 'document', label: 'Document', desc: 'Analyze documents and charts' },
+  { value: 'object', label: 'Objects', desc: 'Identify key items and layout' },
 ]
 
 function isVisionMode(value: string): value is VisionMode {
@@ -31,13 +31,13 @@ function stopTracks(activeStream: MediaStream | null) {
 function cameraErrorMessage(cause: unknown): string {
   const name = cause instanceof DOMException ? cause.name : ''
   if (name === 'NotAllowedError' || name === 'SecurityError') {
-    return 'Camera access was denied. Allow camera access and try again.'
+    return 'Camera access was denied. Allow camera access in your browser and try again.'
   }
   if (name === 'NotFoundError' || name === 'OverconstrainedError') {
     return 'No compatible camera was found on this device.'
   }
   if (name === 'NotReadableError') {
-    return 'The camera is already in use by another application.'
+    return 'The camera is currently in use by another application.'
   }
   return 'The camera could not be started.'
 }
@@ -49,7 +49,7 @@ export function VisionPanel() {
   const cameraRequest = useRef(0)
   const mounted = useRef(false)
   const [state, setState] = useState<VisionState>('IDLE')
-  const [prompt, setPrompt] = useState('What do you see?')
+  const [prompt, setPrompt] = useState('What do you see in this image?')
   const [mode, setMode] = useState<VisionMode>('general')
   const [snapshot, setSnapshot] = useState<Blob | null>(null)
   const [preview, setPreview] = useState('')
@@ -91,7 +91,7 @@ export function VisionPanel() {
     setPreview('')
     if (!navigator.mediaDevices?.getUserMedia) {
       setState('ERROR')
-      setError('Camera access is not available in this browser.')
+      setError('Camera access is not available in this browser environment.')
       return
     }
 
@@ -179,7 +179,7 @@ export function VisionPanel() {
     if (!file) return
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
       setState('ERROR')
-      setError('Choose a PNG, JPEG, or WebP image.')
+      setError('Please select a PNG, JPEG, or WebP image.')
       return
     }
 
@@ -198,7 +198,7 @@ export function VisionPanel() {
   const analyze = async () => {
     if (!snapshot) {
       setState('ERROR')
-      setError('Capture a snapshot or choose an image before analyzing.')
+      setError('Please capture a snapshot or upload an image first.')
       return
     }
     setState('ANALYZING')
@@ -212,86 +212,190 @@ export function VisionPanel() {
     } catch (cause) {
       if (!mounted.current) return
       setState('ERROR')
-      setError(cause instanceof Error ? cause.message : 'The vision request failed.')
+      setError(cause instanceof Error ? cause.message : 'Vision analysis failed.')
     }
   }
 
   const isBusy = state === 'REQUESTING_PERMISSION' || state === 'CAPTURING' || state === 'ANALYZING'
 
   return (
-    <section className="vision-panel" aria-label="Vision">
-      <div className="vision-heading">
-        <span className="section-kicker">VISION</span>
-        <span role="status" aria-live="polite">{state.replace(/_/g, ' ')}</span>
-      </div>
-      <div className="vision-preview">
-        <video
-          ref={video}
-          muted
-          playsInline
-          aria-label="Live camera preview"
-          hidden={!stream.current || Boolean(preview)}
-        />
-        {preview ? <img src={preview} alt="Selected snapshot for vision analysis" /> : null}
-        {!preview && !stream.current ? (
-          <p>{state === 'REQUESTING_PERMISSION' ? 'Waiting for camera permission…' : 'Camera is off. Activate the camera or choose an image.'}</p>
-        ) : null}
-        <canvas ref={canvas} hidden />
-      </div>
-      <div className="vision-actions">
-        {!stream.current && state !== 'REQUESTING_PERMISSION' ? (
-          <button type="button" onClick={() => void startCamera()} disabled={isBusy}>
-            Activate camera
-          </button>
-        ) : null}
-        {stream.current && !isBusy ? (
-          <button type="button" onClick={capture}>Capture snapshot</button>
-        ) : null}
-        {stream.current || state === 'REQUESTING_PERMISSION' ? (
-          <button type="button" onClick={stopCamera}>
-            {state === 'REQUESTING_PERMISSION' ? 'Cancel camera request' : 'Stop camera'}
-          </button>
-        ) : null}
-        <label className="vision-file">
-          Choose image
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            disabled={state === 'ANALYZING'}
-            onChange={(event) => {
-              chooseFile(event.currentTarget.files?.[0])
-              event.currentTarget.value = ''
-            }}
-          />
-        </label>
-      </div>
-      <label className="vision-prompt">
-        Prompt
-        <input value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={4000} />
-      </label>
-      <label className="vision-prompt">
-        Mode
-        <select
-          value={mode}
-          onChange={(event) => {
-            const nextMode = event.currentTarget.value
-            if (isVisionMode(nextMode)) setMode(nextMode)
-          }}
-        >
-          {modes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-      </label>
-      <button className="vision-analyze" type="button" onClick={() => void analyze()} disabled={!snapshot || state === 'ANALYZING'}>
-        {state === 'ANALYZING' ? 'Analyzing…' : 'Analyze snapshot'}
-      </button>
-      {error ? <p className="vision-error" role="alert">{error}</p> : null}
-      {result ? (
-        <div className="vision-result" aria-live="polite">
-          <span className="section-kicker">LEON / VISUAL RESPONSE</span>
-          <p>{result.description}</p>
-          <small>{result.model} · {result.width} × {result.height}</small>
+    <div className="vision-view-container" aria-label="Vision Analysis Studio">
+      <div className="vision-header-bar">
+        <div>
+          <span className="section-badge">VISION STUDIO</span>
+          <h2 className="vision-main-title">Visual Intelligence</h2>
         </div>
-      ) : null}
-    </section>
+        <div className={`vision-status-chip state-${state.toLowerCase()}`}>
+          <span className="pulse-dot" />
+          {state === 'REQUESTING_PERMISSION'
+            ? 'Requesting Camera'
+            : state === 'CAMERA_READY'
+            ? 'Camera Live'
+            : state === 'CAPTURING'
+            ? 'Capturing Frame'
+            : state === 'SNAPSHOT_READY'
+            ? 'Image Ready'
+            : state === 'ANALYZING'
+            ? 'Analyzing...'
+            : state === 'RESULT'
+            ? 'Analysis Complete'
+            : state === 'ERROR'
+            ? 'Action Needed'
+            : 'Standby'}
+        </div>
+      </div>
+
+      <div className="vision-stage-layout">
+        {/* Viewport Box */}
+        <div className="vision-viewport-card">
+          <div className="viewport-inner">
+            <video
+              ref={video}
+              muted
+              playsInline
+              aria-label="Live camera feed"
+              className="viewport-video"
+              hidden={!stream.current || Boolean(preview)}
+            />
+            {preview ? (
+              <img src={preview} alt="Snapshot to analyze" className="viewport-preview-img" />
+            ) : null}
+
+            {!preview && !stream.current ? (
+              <div className="viewport-empty-placeholder">
+                <div className="empty-icon-circle">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                  </svg>
+                </div>
+                <h3>Camera feed is inactive</h3>
+                <p>Start your camera or select an image file to begin analysis.</p>
+              </div>
+            ) : null}
+            <canvas ref={canvas} hidden />
+          </div>
+
+          {/* Controls toolbar */}
+          <div className="viewport-toolbar">
+            {!stream.current && state !== 'REQUESTING_PERMISSION' ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => void startCamera()}
+                disabled={isBusy}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                Activate Camera
+              </button>
+            ) : null}
+
+            {stream.current && !isBusy ? (
+              <button type="button" className="btn-accent" onClick={capture}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                Take Snapshot
+              </button>
+            ) : null}
+
+            {stream.current || state === 'REQUESTING_PERMISSION' ? (
+              <button type="button" className="btn-secondary" onClick={stopCamera}>
+                {state === 'REQUESTING_PERMISSION' ? 'Cancel' : 'Stop Camera'}
+              </button>
+            ) : null}
+
+            <label className="btn-file-upload">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload Image
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={state === 'ANALYZING'}
+                onChange={(event) => {
+                  chooseFile(event.currentTarget.files?.[0])
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Configuration & Action Area */}
+        <div className="vision-config-card">
+          <div className="config-form-group">
+            <label className="form-label" htmlFor="vision-prompt-input">
+              Analysis Prompt
+            </label>
+            <input
+              id="vision-prompt-input"
+              className="form-input"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="e.g., What is in this image? Transcribe text, summarize content..."
+              maxLength={4000}
+            />
+          </div>
+
+          <div className="config-form-group">
+            <label className="form-label">Analysis Mode</label>
+            <div className="mode-pill-grid">
+              {modes.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`mode-pill-btn ${mode === opt.value ? 'selected' : ''}`}
+                  onClick={() => setMode(opt.value)}
+                >
+                  <strong>{opt.label}</strong>
+                  <small>{opt.desc}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            className="btn-analyze-submit"
+            type="button"
+            onClick={() => void analyze()}
+            disabled={!snapshot || state === 'ANALYZING'}
+          >
+            {state === 'ANALYZING' ? (
+              <>
+                <span className="spinner-icon" />
+                Analyzing with Vision Model...
+              </>
+            ) : (
+              <>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                Analyze Snapshot
+              </>
+            )}
+          </button>
+
+          {error && (
+            <div className="vision-error-box" role="alert">
+              <span>⚠</span> {error}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Analysis Result Output */}
+      {result && (
+        <div className="vision-result-card" aria-live="polite">
+          <div className="result-header">
+            <div className="result-title-group">
+              <span className="result-badge">AI ANALYSIS</span>
+              <h3>Vision Model Response</h3>
+            </div>
+            <span className="result-meta">
+              {result.model} · {result.width}×{result.height}px
+            </span>
+          </div>
+          <div className="result-body">
+            <p>{result.description}</p>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

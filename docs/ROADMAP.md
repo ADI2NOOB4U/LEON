@@ -1,32 +1,41 @@
-# Roadmap
+# LEON roadmap
 
-## Current milestone
+The roadmap separates product capability from deployment assurance. A feature can be technically implemented while still requiring department-specific approval before production use.
 
-### DONE
-- Stabilize backend and tests.
-- Establish task lifecycle and persistence.
-- Add memory CRUD and search.
-- Harden permissioned tool execution.
-- Create premium frontend shell and 3D core visual foundation.
+## Delivered foundation
 
-### PARTIAL
-- Real model integration path.
-- Full frontend feature parity with backend capabilities.
-- Memory UX and tool visualization.
+- FastAPI backend and React/Vite workspace.
+- SQLite persistence for tasks, memory, missions, events, and operational state.
+- Deterministic-first Intelligence Core with typed route decisions.
+- SAFE / CONFIRM / BLOCKED action authority.
+- Tool registry, planner, worker, scheduler, missions, and verification paths.
+- Local-first model routing for general chat, coding, vision, embeddings, and current-information research.
+- Voice, vision, memory, computer-use, observability, evaluation, and controlled improvement foundations.
+- Automated backend regression suite and frontend typecheck/build validation.
 
-### NOT STARTED
-- Voice and vision support.
-- Browser and desktop automation.
-- Email, phone, and scheduling features.
-- Notification orchestration and alerts.
-- Multi-device sync.
+## Next product priorities
 
-### BLOCKED
-- Real model chat and reasoning are blocked until a local or remote provider runtime is available.
+1. Finish end-to-end frontend coverage for missions, evaluation, observability, memory, and administration.
+2. Add department-configurable workflow templates and approved integration adapters.
+3. Improve multilingual, accessibility, and document-processing support.
+4. Expand evaluation datasets with department-approved, anonymized cases.
+5. Harden provider health, degraded mode, and operator diagnostics.
 
-## Next phase
+## Deployment-assurance priorities
 
-1. Finalize provider configuration and runtime validation.
-2. Extend task progress and tool execution visibility in the frontend.
-3. Add richer memory and system monitoring screens.
-4. Expand task engine into a real planner/executor boundary.
+1. Add identity-provider integration and role-based authorization.
+2. Add tamper-evident audit storage and administrator access controls.
+3. Formalize retention, deletion, export, legal-hold, and records-management behavior.
+4. Complete threat modeling, dependency scanning, penetration testing, and remediation tracking.
+5. Test backup restoration, disaster recovery, capacity, and availability objectives.
+6. Complete accessibility and language validation with representative users.
+
+## Release gates
+
+### Pilot release
+
+Requires a scoped deployment, approved workflows, sanitized or low-sensitivity data, trained users, evaluation baseline, incident owner, and documented limitations.
+
+### Production release
+
+Requires the controls in [Production readiness](PRODUCTION_READINESS.md), department acceptance evidence, security/privacy approval, operational runbooks, tested recovery, and a signed support/exit plan.
